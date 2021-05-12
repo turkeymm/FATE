@@ -31,40 +31,11 @@ from pipeline.backend.config import StatusCode
 from pipeline.utils.logger import LOGGER
 
 
-class JobFunc:
-    SUBMIT_JOB = "submit_job"
-    UPLOAD = "upload"
-    COMPONENT_OUTPUT_MODEL = "component_output_model"
-    COMPONENT_METRIC = "component_metric_all"
-    JOB_STATUS = "query_job"
-    TASK_STATUS = "query_task"
-    COMPONENT_OUTPUT_DATA = "component_output_data"
-    COMPONENT_OUTPUT_DATA_TABLE = "component_output_data_table"
-    DEPLOY_COMPONENT = "deo"
-
-
 class JobInvoker(object):
     def __init__(self):
         self.client = FlowClient(ip=conf.FlowConfig.IP, port=conf.FlowConfig.PORT, version=conf.SERVER_VERSION)
 
-    @classmethod
-    def _run_cmd(cls, cmd, output_while_running=False):
-        subp = subprocess.Popen(cmd,
-                                shell=False,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT)
-        if not output_while_running:
-            stdout, stderr = subp.communicate()
-            return stdout.decode("utf-8")
-        else:
-            for line in subp.stdout:
-                if line == "":
-                    continue
-                else:
-                    # print(line.strip())
-                    LOGGER.debug(f"{line.strip()}")
-
-    def submit_job(self, dsl=None, submit_conf=None):
+    def submit_job(self, dsl=None, submit_conf=None, callback_func=None):
         dsl_path = None
         with tempfile.TemporaryDirectory() as job_dir:
             if dsl:
@@ -79,6 +50,8 @@ class JobInvoker(object):
                 fout.write(json.dumps(submit_conf))
 
             result = self.client.job.submit(conf_path=submit_path, dsl_path=dsl_path)
+            if callback_func is not None:
+                callback_func(result)
             try:
                 if 'retcode' not in result or result["retcode"] != 0:
                     raise ValueError(f"retcode err")
@@ -118,36 +91,38 @@ class JobInvoker(object):
         party_id = str(party_id)
         start_time = time.time()
         pre_cpn = None
-        LOGGER.info(f"Job id is {job_id}")
+        LOGGER.info(f"Job id is {job_id}\n")
         while True:
             ret_code, ret_msg, data = self.query_job(job_id, role, party_id)
             status = data["f_status"]
             if status == JobStatus.SUCCESS:
                 # print("job is success!!!")
                 elapse_seconds = timedelta(seconds=int(time.time() - start_time))
-                sys.stdout.write(f"\n\r")
+                # sys.stdout.write(f"\n\r")
                 LOGGER.info(f"Job is success!!! Job id is {job_id}")
                 LOGGER.info(f"Total time: {elapse_seconds}")
                 return StatusCode.SUCCESS
 
             elif status == JobStatus.FAILED:
-                sys.stdout.write(f"\n\r")
+                # sys.stdout.write(f"\n\r")
+                # LOGGER.info(f"\n\r")
                 raise ValueError(f"Job is failed, please check out job {job_id} by fate board or fate_flow cli")
 
             elif status == JobStatus.WAITING:
                 elapse_seconds = timedelta(seconds=int(time.time() - start_time))
-                sys.stdout.write(f"Job is still waiting, time elapse: {elapse_seconds}\r")
-                sys.stdout.flush()
+                # sys.stdout.write(f"\r")
+                # sys.stdout.flush()
+                LOGGER.info(f"\x1b[80D\x1b[1A\x1b[KJob is still waiting, time elapse: {elapse_seconds}")
 
             elif status == JobStatus.CANCELED:
                 elapse_seconds = timedelta(seconds=int(time.time() - start_time))
-                sys.stdout.write(f"\n\r")
+                # sys.stdout.write(f"\n\r")
                 LOGGER.info(f"Job is canceled, time elapse: {elapse_seconds}\r")
                 return StatusCode.CANCELED
 
             elif status == JobStatus.TIMEOUT:
                 elapse_seconds = timedelta(seconds=int(time.time() - start_time))
-                sys.stdout.write(f"\n\r")
+                # sys.stdout.write(f"\n\r")
                 raise ValueError(f"Job is timeout, time elapse: {elapse_seconds}\r")
 
             elif status == JobStatus.RUNNING:
@@ -166,10 +141,12 @@ class JobInvoker(object):
                         cpn.append(cpn_data["f_component_name"])
 
                 if cpn != pre_cpn:
-                    sys.stdout.write(f"\n \r")
+                    LOGGER.info(f"\r")
                     pre_cpn = cpn
-                sys.stdout.write(f"Running component {cpn}, time elapse: {elapse_seconds}\r")
-                sys.stdout.flush()
+                # sys.stdout.write(f"\r")
+                # sys.stdout.flush()
+                LOGGER.info(f"\x1b[80D\x1b[1A\x1b[KRunning component {cpn}, time elapse: {elapse_seconds}")
+
             else:
                 raise ValueError(f"Unknown status: {status}")
 
@@ -432,21 +409,3 @@ class JobInvoker(object):
             raise ValueError("Cannot get predict dsl, error msg is {}".format(result["retmsg"]))
         else:
             return result["data"]
-
-    """
-    def get_predict_dsl(self, train_dsl, cpn_list, version):
-        result = None
-        with tempfile.TemporaryDirectory() as job_dir:
-            train_dsl_path = os.path.join(job_dir, "train_dsl.json")
-            with open(train_dsl_path, "w") as fout:
-                fout.write(json.dumps(train_dsl))
-
-            result = self.client.job.generate_dsl(train_dsl_path=train_dsl_path, cpn_list=cpn_list, version=version)
-
-        if result is None or 'retcode' not in result:
-            raise ValueError("Call flow generate dsl is failed, check if fate_flow server is start!")
-        elif result["retcode"] != 0:
-            raise ValueError("Cannot generate predict dsl, error msg is {}".format(result["retmsg"]))
-        else:
-            return result["data"]
-    """
