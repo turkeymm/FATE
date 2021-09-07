@@ -17,240 +17,107 @@
 #  limitations under the License.
 
 import copy
+import random
+import functools
 
 import numpy as np
 
-from federatedml.feature.binning.base_binning import BaseBinning
-from federatedml.feature.binning.bin_inner_param import BinInnerParam
-from federatedml.feature.binning.bucket_binning import BucketBinning
-from federatedml.feature.binning.optimal_binning.optimal_binning import OptimalBinning
-from federatedml.feature.binning.quantile_binning import QuantileBinning
-from federatedml.feature.fate_element_type import NoneType
-from federatedml.feature.sparse_vector import SparseVector
-from federatedml.model_base import ModelBase
-from federatedml.param.feature_binning_param import HeteroFeatureBinningParam as FeatureBinningParam
-from federatedml.protobuf.generated import feature_binning_meta_pb2, feature_binning_param_pb2
-from federatedml.statistic.data_overview import get_header
-from federatedml.transfer_variable.transfer_class.hetero_feature_binning_transfer_variable import \
-    HeteroFeatureBinningTransferVariable
-from federatedml.util import LOGGER
-from federatedml.util import abnormal_detection
+from federatedml.feature.hetero_feature_binning.base_feature_binning import BaseFeatureBinning
+from federatedml.secureprotol import PaillierEncrypt
+from federatedml.statistic import data_overview
 from federatedml.util import consts
-from federatedml.util.io_check import assert_io_num_rows_equal
-from federatedml.util.schema_check import assert_schema_consistent
 
-MODEL_PARAM_NAME = 'FeatureBinningParam'
-MODEL_META_NAME = 'FeatureBinningMeta'
+MODEL_PARAM_NAME = 'SecureFeatureBinningParam'
+MODEL_META_NAME = 'SecureFeatureBinningMeta'
 
 
-class BaseFeatureBinning(ModelBase):
+class SecureBinningBase(BaseFeatureBinning):
     """
     Do binning method through guest and host
-
     """
 
     def __init__(self):
-        super(BaseFeatureBinning, self).__init__()
-        self.transfer_variable = HeteroFeatureBinningTransferVariable()
-        self.binning_obj: BaseBinning = None
-        self.header = None
-        self.header_anonymous = None
-        self.schema = None
-        self.host_results = []
-        self.transform_type = None
+        super().__init__()
 
-        self.model_param = FeatureBinningParam()
-        self.bin_inner_param = BinInnerParam()
+    def _guest_prepare_labels(self, data_instances):
+        label_counts_dict = data_overview.get_label_count(data_instances)
 
-    def _init_model(self, params: FeatureBinningParam):
-        self.model_param = params
+        if len(label_counts_dict) > 2:
+            raise ValueError("Secure mode binning does not support multi-class data yet")
+        self.labels = list(label_counts_dict.keys())
+        label_counts = [label_counts_dict[k] for k in self.labels]
+        label_table = data_instances.mapValues(lambda x: x.label)
 
-        self.transform_type = self.model_param.transform_param.transform_type
-
-        if self.model_param.method == consts.QUANTILE:
-            self.binning_obj = QuantileBinning(self.model_param)
-        elif self.model_param.method == consts.BUCKET:
-            self.binning_obj = BucketBinning(self.model_param)
-        elif self.model_param.method == consts.OPTIMAL:
-            if self.role == consts.HOST:
-                self.model_param.bin_num = self.model_param.optimal_binning_param.init_bin_nums
-                self.binning_obj = QuantileBinning(self.model_param)
+        if not self.is_local_only:
+            if self.model_param.encrypt_param.method == consts.PAILLIER:
+                cipher = PaillierEncrypt()
+                cipher.generate_key(self.model_param.encrypt_param.key_length)
             else:
-                self.binning_obj = OptimalBinning(self.model_param)
+                raise NotImplementedError("encrypt method not supported yet")
+
+            encrypted_label_table = label_table.mapValues(lambda x: cipher.encrypt(x))
+            self.transfer_variable.encrypted_label.remote(encrypted_label_table,
+                                                          role=consts.HOST,
+                                                          idx=-1)
+        return label_counts_dict, label_counts, label_table
+
+    def _host_prepare_labels(self):
+        if not self.is_local_only:
+            return self.transfer_variable.encrypted_label.get(idx=0)
+        return None
+
+    def cal_woe(self, data_instances, split_points, encrypted_label_table=None):
+        if self.role == consts.GUEST:
+            self._guest_woe_compute()
         else:
-            # self.binning_obj = QuantileBinning(self.bin_param)
-            raise ValueError("Binning method: {} is not supported yet".format(self.model_param.method))
-        LOGGER.debug("in _init_model, role: {}, local_partyid: {}".format(self.role, self.component_properties))
-        self.binning_obj.set_role_party(self.role, self.component_properties.local_partyid)
+            self._host_woe_compute(data_instances, split_points, encrypted_label_table)
+
+    def _guest_woe_compute(self):
+        pass
+
+    def _host_woe_compute(self, data_instances, split_points, encrypted_label_table):
+        data_bin_table = self.binning_obj.get_data_bin(data_instances,
+                                                       split_points,
+                                                       self.bin_inner_param.bin_cols_map)
+        confused_table = self._create_confuse_bin(data_bin_table, split_points)
+        encrypted_bin = self._static_encrypted_bin_label(data_bin_table, encrypted_label_table)
+        encrypted_confused_bin = self._static_encrypted_bin_label(confused_table, encrypted_label_table)
+        confused_table_res = encrypted_bin.join(encrypted_confused_bin, self._merge_confused_bin)
+        confused_table = confused_table_res.mapValues(lambda x: x[0])
+        true_bin_index = confused_table_res.mapValues(lambda x: x[1])
+        assert 1 == 2, f"confused_table: {confused_table.first()}"
+
 
     @staticmethod
-    def data_format_transform(row):
+    def _merge_confused_bin(true_bins, fake_bins):
+        true_bin_len, fake_bin_len = len(true_bins), len(fake_bins)
+        index_pool = [i for i in range(true_bin_len + fake_bin_len)]
+        random.SystemRandom().shuffle(index_pool)
+        true_bin_index = [index_pool.index(x) for x in range(true_bin_len)]
+        res_bin = copy.deepcopy(true_bins)
+        res_bin.extend(fake_bins)
+        res_bin = np.array(res_bin)[index_pool]
 
-        """
-        transform data into sparse format
-        """
+        # test if it can be recover
+        # original_bin = res_bin[true_bin_index]
+        # assert 1 == 2, f"res_bin: {res_bin}, original_bin: {original_bin}," \
+        #                f"index_pool: {index_pool}, true_bin_index: {true_bin_index}"
+        #
+        return res_bin, true_bin_index
 
-        if type(row.features).__name__ != consts.SPARSE_VECTOR:
-            feature_shape = row.features.shape[0]
-            indices = []
-            data = []
+    @staticmethod
+    def _create_confuse_bin(data_bin_table, split_points):
+        bin_num = {k: len(v) for k, v in split_points.items()}
 
-            for i in range(feature_shape):
-                if np.isnan(row.features[i]):
-                    indices.append(i)
-                    data.append(NoneType())
-                elif np.abs(row.features[i]) < consts.FLOAT_ZERO:
-                    continue
-                else:
-                    indices.append(i)
-                    data.append(row.features[i])
+        def _make_confusion_table(bin_dict):
+            res = {}
+            for feature_name in bin_dict.keys():
+                max_num = bin_num.get(feature_name)
+                res[feature_name] = random.SystemRandom().randint(0, max_num - 1)
+            return res
 
-            new_row = copy.deepcopy(row)
-            new_row.features = SparseVector(indices, data, feature_shape)
-            return new_row
-        else:
-            sparse_vec = row.features.get_sparse_vector()
-            replace_key = []
-            for key in sparse_vec:
-                if sparse_vec.get(key) == NoneType() or np.isnan(sparse_vec.get(key)):
-                    replace_key.append(key)
+        confused_table = data_bin_table.mapValues(_make_confusion_table)
+        return confused_table
 
-            if len(replace_key) == 0:
-                return row
-            else:
-                new_row = copy.deepcopy(row)
-                new_sparse_vec = new_row.features.get_sparse_vector()
-                for key in replace_key:
-                    new_sparse_vec[key] = NoneType()
-                return new_row
-
-    def _setup_bin_inner_param(self, data_instances, params):
-        if self.schema is not None:
-            return
-
-        self.header = get_header(data_instances)
-        LOGGER.debug("_setup_bin_inner_param, get header length: {}".format(len(self.header)))
-
-        self.schema = data_instances.schema
-        self.bin_inner_param.set_header(self.header)
-        if params.bin_indexes == -1:
-            self.bin_inner_param.set_bin_all()
-        else:
-            self.bin_inner_param.add_bin_indexes(params.bin_indexes)
-            self.bin_inner_param.add_bin_names(params.bin_names)
-
-        self.bin_inner_param.add_category_indexes(params.category_indexes)
-        self.bin_inner_param.add_category_names(params.category_names)
-
-        if params.transform_param.transform_cols == -1:
-            self.bin_inner_param.set_transform_all()
-        else:
-            self.bin_inner_param.add_transform_bin_indexes(params.transform_param.transform_cols)
-            self.bin_inner_param.add_transform_bin_names(params.transform_param.transform_names)
-        self.binning_obj.set_bin_inner_param(self.bin_inner_param)
-
-    @assert_io_num_rows_equal
-    @assert_schema_consistent
-    def transform(self, data_instances):
-        self._setup_bin_inner_param(data_instances, self.model_param)
-        data_instances = self.binning_obj.transform(data_instances, self.transform_type)
-        self.set_schema(data_instances)
-        self.data_output = data_instances
-        return data_instances
-
-    def _get_meta(self):
-        # col_list = [str(x) for x in self.cols]
-
-        transform_param = feature_binning_meta_pb2.TransformMeta(
-            transform_cols=self.bin_inner_param.transform_bin_indexes,
-            transform_type=self.model_param.transform_param.transform_type
-        )
-
-        meta_protobuf_obj = feature_binning_meta_pb2.FeatureBinningMeta(
-            method=self.model_param.method,
-            compress_thres=self.model_param.compress_thres,
-            head_size=self.model_param.head_size,
-            error=self.model_param.error,
-            bin_num=self.model_param.bin_num,
-            cols=self.bin_inner_param.bin_names,
-            adjustment_factor=self.model_param.adjustment_factor,
-            local_only=self.model_param.local_only,
-            need_run=self.need_run,
-            transform_param=transform_param,
-            skip_static=self.model_param.skip_static
-        )
-        return meta_protobuf_obj
-
-    def _get_param(self):
-        binning_result_obj = self.binning_obj.bin_results.generated_pb()
-        # binning_result_obj = self.bin_results.generated_pb()
-        host_results = [x.bin_results.generated_pb() for x in self.host_results]
-        result_obj = feature_binning_param_pb2. \
-            FeatureBinningParam(binning_result=binning_result_obj,
-                                host_results=host_results,
-                                header=self.header,
-                                header_anonymous=self.header_anonymous,
-                                model_name=consts.BINNING_MODEL)
-
-        return result_obj
-
-    def load_model(self, model_dict):
-        model_param = list(model_dict.get('model').values())[0].get(MODEL_PARAM_NAME)
-        model_meta = list(model_dict.get('model').values())[0].get(MODEL_META_NAME)
-
-        self.bin_inner_param = BinInnerParam()
-
-        assert isinstance(model_meta, feature_binning_meta_pb2.FeatureBinningMeta)
-        assert isinstance(model_param, feature_binning_param_pb2.FeatureBinningParam)
-
-        self.header = list(model_param.header)
-        self.bin_inner_param.set_header(self.header)
-
-        self.bin_inner_param.add_transform_bin_indexes(list(model_meta.transform_param.transform_cols))
-        self.bin_inner_param.add_bin_names(list(model_meta.cols))
-        self.transform_type = model_meta.transform_param.transform_type
-
-        bin_method = str(model_meta.method)
-        if bin_method == consts.QUANTILE:
-            self.binning_obj = QuantileBinning(params=model_meta)
-        else:
-            self.binning_obj = BucketBinning(params=model_meta)
-
-        self.binning_obj.set_role_party(self.role, self.component_properties.local_partyid)
-        self.binning_obj.set_bin_inner_param(self.bin_inner_param)
-        self.binning_obj.bin_results.reconstruct(model_param.binning_result)
-
-        self.host_results = []
-        for host_pb in model_param.host_results:
-            host_bin_obj = BaseBinning()
-            host_bin_obj.bin_results.reconstruct(host_pb)
-            self.host_results.append(host_bin_obj)
-
-    def export_model(self):
-        if self.model_output is not None:
-            return self.model_output
-
-        meta_obj = self._get_meta()
-        param_obj = self._get_param()
-        result = {
-            MODEL_META_NAME: meta_obj,
-            MODEL_PARAM_NAME: param_obj
-        }
-        self.model_output = result
-        return result
-
-    def save_data(self):
-        return self.data_output
-
-    def set_schema(self, data_instance):
-        self.schema['header'] = self.header
-        data_instance.schema = self.schema
-        LOGGER.debug("After Binning, when setting schema, schema is : {}".format(data_instance.schema))
-
-    def _abnormal_detection(self, data_instances):
-        """
-        Make sure input data_instances is valid.
-        """
-        abnormal_detection.empty_table_detection(data_instances)
-        abnormal_detection.empty_feature_detection(data_instances)
-        self.check_schema_content(data_instances.schema)
+    def _apply_random_num(self, encrypted_bin_sum):
+        pass

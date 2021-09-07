@@ -29,7 +29,7 @@ def hetero_feature_binning_param():
 
 @hetero_binning_cpn_meta.bind_runner.on_guest
 def hetero_feature_binning_guest_runner():
-    from federatedml.feature.hetero_feature_binning.hetero_binning_guest import (
+    from federatedml.feature.secure_binning.hetero_binning_guest import (
         HeteroFeatureBinningGuest,
     )
 
@@ -38,7 +38,7 @@ def hetero_feature_binning_guest_runner():
 
 @hetero_binning_cpn_meta.bind_runner.on_host
 def hetero_feature_binning_host_runner():
-    from federatedml.feature.hetero_feature_binning.hetero_binning_host import (
+    from federatedml.feature.secure_binning.hetero_binning_host import (
         HeteroFeatureBinningHost,
     )
 

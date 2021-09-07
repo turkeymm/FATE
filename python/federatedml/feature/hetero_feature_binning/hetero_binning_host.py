@@ -17,7 +17,6 @@
 import functools
 import operator
 
-from federatedml.cipher_compressor.compressor import CipherCompressorHost
 from federatedml.feature.hetero_feature_binning.base_feature_binning import BaseFeatureBinning
 from federatedml.secureprotol.fate_paillier import PaillierEncryptedNumber
 from federatedml.util import LOGGER
@@ -41,20 +40,20 @@ class HeteroFeatureBinningHost(BaseFeatureBinning):
 
         # Calculates split points of datas in self party
         split_points = self.binning_obj.fit_split_points(data_instances)
-        if self.model_param.skip_static:
-            if self.transform_type != 'woe':
-                data_instances = self.transform(data_instances)
-            else:
-                raise ValueError("Woe transform is not supported in host parties.")
-            self.set_schema(data_instances)
-            self.data_output = data_instances
+        if self.model_param.skip_static or self.is_local_only:
+            self.transform(data_instances)
+            return self.data_output
+
+        encrypted_label_table = self.prepare_labels(data_instances)
+        if encrypted_label_table is None:
+            self.transform(data_instances)
+            total_summary = self.binning_obj.bin_results.to_json()
+            self.set_summary(total_summary)
             return data_instances
 
-        if not self.model_param.local_only:
-            self.compressor = CipherCompressorHost()
-            self._sync_init_bucket(data_instances, split_points)
-            if self.model_param.method == consts.OPTIMAL:
-                self.optimal_binning_sync()
+        self._sync_init_bucket(data_instances, split_points, encrypted_label_table)
+        if self.model_param.method == consts.OPTIMAL:
+            self.optimal_binning_sync()
 
         if self.transform_type != 'woe':
             data_instances = self.transform(data_instances)
@@ -64,16 +63,12 @@ class HeteroFeatureBinningHost(BaseFeatureBinning):
         self.set_summary(total_summary)
         return data_instances
 
-    def _sync_init_bucket(self, data_instances, split_points, need_shuffle=False):
+    def _sync_init_bucket(self, data_instances, split_points, encrypted_label_table):
 
         data_bin_table = self.binning_obj.get_data_bin(data_instances, split_points, self.bin_inner_param.bin_cols_map)
         LOGGER.debug("data_bin_table, count: {}".format(data_bin_table.count()))
 
-        encrypted_label_table = self.transfer_variable.encrypted_label.get(idx=0)
-
-        LOGGER.info("Get encrypted_label_table from guest")
-
-        encrypted_bin_sum = self.__static_encrypted_bin_label(data_bin_table, encrypted_label_table)
+        encrypted_bin_sum = self._static_encrypted_bin_label(data_bin_table, encrypted_label_table)
         encrypted_bin_sum = self.compressor.compress_dtable(encrypted_bin_sum)
 
         encode_name_f = functools.partial(self.bin_inner_param.encode_col_name_dict,
@@ -103,22 +98,6 @@ class HeteroFeatureBinningHost(BaseFeatureBinning):
                                                         role=consts.GUEST,
                                                         idx=0)
 
-    def __static_encrypted_bin_label(self, data_bin_table, encrypted_label):
-        # data_bin_with_label = data_bin_table.join(encrypted_label, lambda x, y: (x, y))
-        label_counts = encrypted_label.reduce(operator.add)
-        sparse_bin_points = self.binning_obj.get_sparse_bin(self.bin_inner_param.bin_indexes,
-                                                            self.binning_obj.bin_results.all_split_points,
-                                                            self.bin_inner_param.header)
-        sparse_bin_points = {self.bin_inner_param.header[k]: v for k, v in sparse_bin_points.items()}
-
-        encrypted_bin_sum = self.iv_calculator.cal_bin_label(
-            data_bin_table=data_bin_table,
-            sparse_bin_points=sparse_bin_points,
-            label_table=encrypted_label,
-            label_counts=label_counts
-        )
-
-        return encrypted_bin_sum
 
     @staticmethod
     def convert_compress_format(col_name, encrypted_bin_sum):

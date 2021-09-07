@@ -22,13 +22,13 @@ import copy
 import numpy as np
 
 from federatedml.cipher_compressor import compressor
-from federatedml.feature.hetero_feature_binning.base_feature_binning import BaseFeatureBinning
+from federatedml.feature.secure_binning.base_feature_binning import SecureBinningBase
 from federatedml.secureprotol.fate_paillier import PaillierEncryptedNumber
 from federatedml.util import LOGGER
 from federatedml.util import consts
 
 
-class HeteroFeatureBinningHost(BaseFeatureBinning):
+class HeteroFeatureBinningHost(SecureBinningBase):
     def fit(self, data_instances):
         """
         Apply binning method for both data instances in local party as well as the other one. Afterwards, calculate
@@ -41,23 +41,28 @@ class HeteroFeatureBinningHost(BaseFeatureBinning):
 
         # Calculates split points of datas in self party
         split_points = self.binning_obj.fit_split_points(data_instances)
-        if self.model_param.skip_static:
-            if self.transform_type != 'woe':
-                data_instances = self.transform(data_instances)
-            self.set_schema(data_instances)
-            self.data_output = data_instances
+        if self.model_param.skip_static or self.is_local_only:
+            self.transform(data_instances)
+            return self.data_output
+
+        encrypted_label_table = self.prepare_labels(data_instances)
+        if encrypted_label_table is None:
+            self.transform(data_instances)
+            total_summary = self.binning_obj.bin_results.to_json()
+            self.set_summary(total_summary)
             return data_instances
 
-        if not self.model_param.local_only:
-            self._sync_init_bucket(data_instances, split_points)
-            if self.model_param.method == consts.OPTIMAL:
-                self.optimal_binning_sync()
+        self.cal_woe(data_instances, split_points, encrypted_label_table)
+
+        self._sync_init_bucket(data_instances, split_points, encrypted_label_table)
+        if self.model_param.method == consts.OPTIMAL:
+            self.optimal_binning_sync()
 
         if self.transform_type != 'woe':
             data_instances = self.transform(data_instances)
         self.set_schema(data_instances)
         self.data_output = data_instances
-        total_summary = self.binning_obj.bin_results.summary()
+        total_summary = self.binning_obj.bin_results.to_json()
         self.set_summary(total_summary)
         return data_instances
 
@@ -118,113 +123,9 @@ class HeteroFeatureBinningHost(BaseFeatureBinning):
         # Cal woe
         # remote back
 
-    @staticmethod
-    def _merge_confused_bin(true_bins, fake_bins):
-        true_bin_len, fake_bin_len = len(true_bins), len(fake_bins)
-        index_pool = [i for i in range(true_bin_len + fake_bin_len)]
-        random.SystemRandom().shuffle(index_pool)
-        true_bin_index = [index_pool.index(x) for x in range(true_bin_len)]
-        res_bin = copy.deepcopy(true_bins)
-        res_bin.extend(fake_bins)
-        res_bin = np.array(res_bin)[index_pool]
-        original_bin = res_bin[true_bin_index]
-        assert 1 == 2, f"res_bin: {res_bin}, original_bin: {original_bin}," \
-                       f"index_pool: {index_pool}, true_bin_index: {true_bin_index}"
-
-    def _create_confuse_bin(self, data_bin_table, split_points):
-        bin_num = {k: len(v) for k, v in split_points.items()}
-
-        def _make_confusion_table(bin_dict):
-            res = {}
-            for feature_name in bin_dict.keys():
-                max_num = bin_num.get(feature_name)
-                res[feature_name] = random.SystemRandom().randint(0, max_num-1)
-            return res
-
-        confused_table = data_bin_table.mapValues(_make_confusion_table)
-        return confused_table
 
     def _apply_random_num(self, encrypted_bin_sum):
         pass
-
-    def __static_encrypted_bin_label(self, data_bin_table, encrypted_label, cols_dict, split_points):
-        """
-        Returns:
-            table with value like:
-                [[event_count, total_num], [event_count, total_num] ... ]
-        """
-        data_bin_with_label = data_bin_table.join(encrypted_label, lambda x, y: (x, y))
-        event_sum = encrypted_label.reduce(operator.add)
-        label_counts = {0: encrypted_label.count() - event_sum,
-                        1: event_sum}
-        sparse_bin_points = self.binning_obj.get_sparse_bin(self.bin_inner_param.bin_indexes,
-                                                            self.binning_obj.split_points)
-        sparse_bin_points = {self.bin_inner_param.header[k]: v for k, v in sparse_bin_points.items()}
-
-        f = functools.partial(self.binning_obj.add_label_in_partition,
-                              sparse_bin_points=sparse_bin_points)
-
-        encrypted_bin_sum = data_bin_with_label.mapReducePartitions(f, self.binning_obj.aggregate_partition_label)
-
-        def cal_zeros(bin_results):
-            for b in bin_results:
-                b[1] = b[1] - b[0]
-            return bin_results
-
-        encrypted_bin_sum = encrypted_bin_sum.mapValues(cal_zeros)
-
-        f = functools.partial(self.binning_obj.fill_sparse_result,
-                              sparse_bin_points=sparse_bin_points,
-                              label_counts=label_counts)
-        encrypted_bin_sum = encrypted_bin_sum.map(f)
-
-        return encrypted_bin_sum
-
-    def cipher_compress(self, encrypted_bin_sum, max_value):
-        encrypted_bin_sum = encrypted_bin_sum.map(self.convert_compress_format)
-
-        def _compress(col_dict):
-            cipher_max_int = None
-            res = {}
-            event_counts = col_dict.get("event_counts")
-            for v in event_counts:
-                if isinstance(v, PaillierEncryptedNumber):
-                    cipher_max_int = v.public_key.max_int
-                    break
-            if cipher_max_int is None:
-                raise ValueError("All event counts are 0, please check data input.")
-            _compressor = compressor.CipherCompressor(consts.PAILLIER, max_value,
-                                                      cipher_max_int, compressor.NormalCipherPackage, 0)
-            res["event_counts"] = _compressor.compress(col_dict["event_counts"])
-            res["non_event_counts"] = _compressor.compress(col_dict["non_event_counts"])
-            return res
-
-        converted_bin_sum = encrypted_bin_sum.mapValues(_compress)
-        return converted_bin_sum
-
-    @staticmethod
-    def convert_compress_format(col_name, encrypted_bin_sum):
-        """
-        Parameters
-        ----------
-        encrypted_bin_sum :  list.
-            It is like:
-                {'x1': [[event_count, non_event_count], [event_count, non_event_count] ... ],
-                 'x2': [[event_count, non_event_count], [event_count, non_event_count] ... ],
-                 ...
-                }
-
-        returns
-        -------
-        {"keys": ['x1', 'x2' ...],
-         "event_counts": [...],
-         "non_event_counts": [...],
-         "bin_num": [...]
-         }
-        """
-        event_counts = [x[0] for x in encrypted_bin_sum]
-        non_event_counts = [x[1] for x in encrypted_bin_sum]
-        return col_name, {"event_counts": event_counts, "non_event_counts": non_event_counts}
 
     def optimal_binning_sync(self):
         bucket_idx = self.transfer_variable.bucket_idx.get(idx=0)

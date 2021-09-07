@@ -17,6 +17,7 @@
 #  limitations under the License.
 
 import copy
+import operator
 
 import numpy as np
 
@@ -27,6 +28,7 @@ from federatedml.feature.binning.optimal_binning.optimal_binning import OptimalB
 from federatedml.feature.binning.quantile_binning import QuantileBinning
 from federatedml.feature.binning.iv_calculator import IvCalculator
 from federatedml.feature.binning.bin_result import MultiClassBinResult
+from federatedml.statistic import data_overview
 from federatedml.feature.fate_element_type import NoneType
 from federatedml.feature.sparse_vector import SparseVector
 from federatedml.model_base import ModelBase
@@ -40,6 +42,11 @@ from federatedml.util import abnormal_detection
 from federatedml.util import consts
 from federatedml.util.io_check import assert_io_num_rows_equal
 from federatedml.util.schema_check import assert_schema_consistent
+from federatedml.secureprotol import PaillierEncrypt
+from federatedml.secureprotol.encrypt_mode import EncryptModeCalculator
+from federatedml.cipher_compressor.packer import GuestIntegerPacker
+from federatedml.cipher_compressor.compressor import CipherCompressorHost
+
 
 MODEL_PARAM_NAME = 'FeatureBinningParam'
 MODEL_META_NAME = 'FeatureBinningMeta'
@@ -65,6 +72,7 @@ class BaseFeatureBinning(ModelBase):
         self.bin_inner_param = BinInnerParam()
         self.bin_result = MultiClassBinResult(labels=[0, 1])
         self.labels = []
+        self.compressor = None
 
     def _init_model(self, params: FeatureBinningParam):
         self.model_param = params
@@ -92,6 +100,10 @@ class BaseFeatureBinning(ModelBase):
                                           role=self.role,
                                           party_id=self.component_properties.local_partyid)
         # self.binning_obj.set_role_party(self.role, self.component_properties.local_partyid)
+
+    @property
+    def is_local_only(self):
+        return self.model_param.local_only
 
     @staticmethod
     def data_format_transform(row):
@@ -306,3 +318,60 @@ class BaseFeatureBinning(ModelBase):
         abnormal_detection.empty_table_detection(data_instances)
         abnormal_detection.empty_feature_detection(data_instances)
         self.check_schema_content(data_instances.schema)
+
+    def prepare_labels(self, data_instances=None):
+        if self.role == consts.GUEST:
+            return self._guest_prepare_labels(data_instances)
+        else:
+            return self._host_prepare_labels()
+
+    def _guest_prepare_labels(self, data_instances):
+        label_counts_dict = data_overview.get_label_count(data_instances)
+
+        if len(label_counts_dict) > 2:
+            if self.model_param.method == consts.OPTIMAL:
+                raise ValueError("Have not supported optimal binning in multi-class data yet")
+
+        self.labels = list(label_counts_dict.keys())
+        label_counts = [label_counts_dict[k] for k in self.labels]
+        label_table = IvCalculator.convert_label(data_instances, self.labels)
+
+        if not self.is_local_only:
+            if self.model_param.encrypt_param.method == consts.PAILLIER:
+                paillier_encryptor = PaillierEncrypt()
+                paillier_encryptor.generate_key(self.model_param.encrypt_param.key_length)
+                cipher = EncryptModeCalculator(encrypter=paillier_encryptor)
+            else:
+                raise NotImplementedError("encrypt method not supported yet")
+            self.compressor = GuestIntegerPacker(pack_num=len(self.labels), pack_num_range=label_counts,
+                                                 encrypt_mode_calculator=cipher)
+
+            converted_label_table = label_table.mapValues(lambda x: [int(i) for i in x])
+            encrypted_label_table = self.compressor.pack_and_encrypt(converted_label_table)
+            self.transfer_variable.encrypted_label.remote(encrypted_label_table,
+                                                          role=consts.HOST,
+                                                          idx=-1)
+        return label_counts_dict, label_counts, label_table
+
+    def _host_prepare_labels(self):
+        if not self.is_local_only:
+            self.compressor = CipherCompressorHost()
+            return self.transfer_variable.encrypted_label.get(idx=0)
+        return None
+
+    def _static_encrypted_bin_label(self, data_bin_table, encrypted_label):
+        # data_bin_with_label = data_bin_table.join(encrypted_label, lambda x, y: (x, y))
+        label_counts = encrypted_label.reduce(operator.add)
+        sparse_bin_points = self.binning_obj.get_sparse_bin(self.bin_inner_param.bin_indexes,
+                                                            self.binning_obj.bin_results.all_split_points,
+                                                            self.bin_inner_param.header)
+        sparse_bin_points = {self.bin_inner_param.header[k]: v for k, v in sparse_bin_points.items()}
+
+        encrypted_bin_sum = self.iv_calculator.cal_bin_label(
+            data_bin_table=data_bin_table,
+            sparse_bin_points=sparse_bin_points,
+            label_table=encrypted_label,
+            label_counts=label_counts
+        )
+
+        return encrypted_bin_sum
