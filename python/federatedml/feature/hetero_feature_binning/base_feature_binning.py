@@ -73,6 +73,7 @@ class BaseFeatureBinning(ModelBase):
         self.bin_result = MultiClassBinResult(labels=[0, 1])
         self.labels = []
         self.compressor = None
+        self.cipher = None
 
     def _init_model(self, params: FeatureBinningParam):
         self.model_param = params
@@ -99,6 +100,12 @@ class BaseFeatureBinning(ModelBase):
         self.iv_calculator = IvCalculator(self.model_param.adjustment_factor,
                                           role=self.role,
                                           party_id=self.component_properties.local_partyid)
+        if not self.is_local_only:
+            if self.model_param.encrypt_param.method == consts.PAILLIER:
+                self.cipher = PaillierEncrypt()
+                self.cipher.generate_key(self.model_param.encrypt_param.key_length)
+            else:
+                raise NotImplementedError("encrypt method not supported yet")
         # self.binning_obj.set_role_party(self.role, self.component_properties.local_partyid)
 
     @property
@@ -359,7 +366,7 @@ class BaseFeatureBinning(ModelBase):
             return self.transfer_variable.encrypted_label.get(idx=0)
         return None
 
-    def _static_encrypted_bin_label(self, data_bin_table, encrypted_label):
+    def _static_encrypted_bin_label(self, data_bin_table, encrypted_label, with_compress=True):
         # data_bin_with_label = data_bin_table.join(encrypted_label, lambda x, y: (x, y))
         label_counts = encrypted_label.reduce(operator.add)
         sparse_bin_points = self.binning_obj.get_sparse_bin(self.bin_inner_param.bin_indexes,
@@ -371,7 +378,7 @@ class BaseFeatureBinning(ModelBase):
             data_bin_table=data_bin_table,
             sparse_bin_points=sparse_bin_points,
             label_table=encrypted_label,
-            label_counts=label_counts
+            with_compress=with_compress
         )
 
         return encrypted_bin_sum

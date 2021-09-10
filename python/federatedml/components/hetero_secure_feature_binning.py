@@ -22,9 +22,9 @@ hetero_binning_cpn_meta = ComponentMeta("HeteroSecureFeatureBinning")
 
 @hetero_binning_cpn_meta.bind_param
 def hetero_feature_binning_param():
-    from federatedml.param.secure_binning_param import HeteroFeatureBinningParam
+    from federatedml.param.secure_binning_param import FeatureBinningParam
 
-    return HeteroFeatureBinningParam
+    return FeatureBinningParam
 
 
 @hetero_binning_cpn_meta.bind_runner.on_guest

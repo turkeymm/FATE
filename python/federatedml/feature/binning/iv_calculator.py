@@ -63,11 +63,9 @@ class IvCalculator(object):
         data_bin_table = BaseBinning.get_data_bin(data_instances, split_points, bin_cols_map)
         sparse_bin_points = BaseBinning.get_sparse_bin(bin_indexes, split_points, header)
         sparse_bin_points = {header[k]: v for k, v in sparse_bin_points.items()}
-
         if label_table is None:
             label_table = self.convert_label(data_instances, labels)
-
-        result_counts = self.cal_bin_label(data_bin_table, sparse_bin_points, label_table, label_counts)
+        result_counts = self.cal_bin_label(data_bin_table, sparse_bin_points, label_table)
         multi_bin_res = self.cal_iv_from_counts(result_counts, labels,
                                                 role=self.role,
                                                 party_id=self.party_id)
@@ -102,7 +100,7 @@ class IvCalculator(object):
 
         return result_counts.mapValues(_mask)
 
-    def cal_bin_label(self, data_bin_table, sparse_bin_points, label_table, label_counts):
+    def cal_bin_label(self, data_bin_table, sparse_bin_points, label_table, with_compress=True):
         """
 
         data_bin_table : DTable.
@@ -123,11 +121,26 @@ class IvCalculator(object):
             Table with value:
             [[label_0_sum, label_1_sum, ...], [label_0_sum, label_1_sum, ...] ... ]
         """
-        data_bin_with_label = data_bin_table.join(label_table, lambda x, y: (x, y))
+        if with_compress:
+            data_bin_with_label = data_bin_table.join(label_table, lambda x, y: (x, y))
+        else:
+            data_bin_with_label = data_bin_table.join(label_table, lambda x, y: (x, np.array([y, 1])))
         f = functools.partial(self.add_label_in_partition,
                               sparse_bin_points=sparse_bin_points)
 
         result_counts = data_bin_with_label.mapReducePartitions(f, self.aggregate_partition_label)
+
+        def _get_non_event_count(static_count):
+            res = []
+            for event_count, total_count in static_count:
+                res.append(np.array([event_count, total_count - event_count]))
+            return np.array(res)
+
+        if not with_compress:
+            result_counts = result_counts.mapValues(_get_non_event_count)
+            # for col_name, bin_results in result_counts.items():
+            #     for b in bin_results:
+            #         b[1] = b[1] - b[0]
 
         return result_counts
 
