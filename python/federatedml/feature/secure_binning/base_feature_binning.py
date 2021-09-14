@@ -16,17 +16,15 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-import copy
-import random
 import functools
+import random
 
 import numpy as np
 
+from federatedml.feature.binning.iv_calculator import IvCalculator
 from federatedml.feature.hetero_feature_binning.base_feature_binning import BaseFeatureBinning
-from federatedml.secureprotol import PaillierEncrypt
 from federatedml.statistic import data_overview
 from federatedml.util import consts
-from federatedml.feature.binning.iv_calculator import IvCalculator
 
 MODEL_PARAM_NAME = 'SecureFeatureBinningParam'
 MODEL_META_NAME = 'SecureFeatureBinningMeta'
@@ -71,12 +69,16 @@ class SecureBinningBase(BaseFeatureBinning):
 
     def _guest_woe_compute(self):
         confused_table = self.transfer_variable.confused_table.get(idx=-1)
+
         def _compute_log_ratio(static_count, cipher):
             ratio = []
             for event_count, non_event_count in static_count:
                 ratio.append(np.log(cipher.decrypt(event_count)) -
                              np.log(cipher.decrypt(non_event_count)))
-            return np.ar
+            return np.array(ratio)
+
+        compute_func = functools.partial(_compute_log_ratio,
+                                         cipher=self.cipher)
         decrypted_table = confused_table.mapValues(lambda x: self.cipher.recursive_decrypt(x))
 
     def _host_woe_compute(self, data_instances, split_points, encrypted_label_table):
