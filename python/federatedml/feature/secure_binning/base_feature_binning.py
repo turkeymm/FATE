@@ -40,6 +40,10 @@ class SecureBinningBase(BaseFeatureBinning):
         self.random_filed = 1 << 6
 
     def _guest_prepare_labels(self, data_instances):
+        """
+        Convert label to array. For example, in binary case, label convert to [0, 1] or [1, 0]
+        If not local_only, the encrypted version will be transfer to host.
+        """
         label_counts_dict = data_overview.get_label_count(data_instances)
 
         if len(label_counts_dict) > 2:
