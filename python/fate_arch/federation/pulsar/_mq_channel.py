@@ -55,6 +55,7 @@ class MQChannel(object):
         role,
         credential=None,
         extra_args: dict = None,
+        replication_clusters=None
     ):
         # "host:port" is used to connect the pulsar broker
         self._host = host
@@ -68,6 +69,7 @@ class MQChannel(object):
         self._party_id = party_id
         self._role = role
         self._extra_args = extra_args
+        self._replication_clusters = replication_clusters
 
         # "_channel" is the subscriptor for the topic
         self._producer_send = None
@@ -106,7 +108,7 @@ class MQChannel(object):
         LOGGER.debug("send data size: {}".format(len(body)))
 
         message_id = self._producer_send.send(
-            content=body, properties=properties)
+            content=body, properties=properties, replication_clusters=self._replication_clusters)
         if message_id is None:
             raise Exception("publish failed")
 

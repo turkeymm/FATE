@@ -416,6 +416,7 @@ class Federation(FederationABC):
                     namespace=self._session_id,
                     send=send_topic_name,
                     receive=receive_topic_name,
+                    replication_clusters=[party.party_id]
                 )
 
                 if party.party_id == self._party.party_id:
@@ -620,6 +621,7 @@ class Federation(FederationABC):
             role=role,
             credential=None,
             extra_args=conf,
+            replication_clusters=topic_pair.replication_clusters
         )
 
     def _get_channels(self, party_topic_infos):
