@@ -54,14 +54,12 @@ class MQ(object):
 
     def __str__(self):
         return (
-            f"MQ(host={self.host}, port={self.port}, union_name={self.union_name}, "
-            f"policy_id={self.policy_id}, route_table={self.route_table}), "
+            f"MQ(host={self.host}, port={self.port}, route_table={self.route_table}), "
             f"type=pulsar"
         )
 
     def __repr__(self):
         return self.__str__()
-
 
 # to locate pulsar topic
 
