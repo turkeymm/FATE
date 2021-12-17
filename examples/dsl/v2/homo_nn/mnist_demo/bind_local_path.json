@@ -1,7 +1,7 @@
 {
     "engine": "PATH",
     "namespace": "experiment",
-    "name": "mnist_images2",
+    "name": "mnist_images",
     "address": {
         "path": "$PROJECT_BASE/examples/data/mnist_train"
     }
