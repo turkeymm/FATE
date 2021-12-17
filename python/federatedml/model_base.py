@@ -88,9 +88,10 @@ class Metric:
         self.key = key
         self.value = value
         self.timestamp = timestamp
-    
+
     def to_dict(self):
-        return dict(key=self.key, value=self.value, timestamp = self.timestamp)
+        return dict(key=self.key, value=self.value, timestamp=self.timestamp)
+
 
 class MetricMeta:
     def __init__(self, name: str, metric_type: MetricType, extra_metas: dict = None):
@@ -183,7 +184,7 @@ class ModelBase(object):
         if self._tracker is None:
             raise RuntimeError(f"use tracker before set")
         return self._tracker
-    
+
     @tracker.setter
     def tracker(self, value):
         self._tracker = WarpedTrackerClient(value)
@@ -257,7 +258,12 @@ class ModelBase(object):
             meta = export_dict[meta_name]
 
         # set component name
-        meta.component = self.get_component_name()
+        if hasattr(meta, "component"):
+            meta.component = self.get_component_name()
+        else:
+            import warnings
+
+            warnings.warn(f"{meta} should add `component` field")
         return export_dict
 
     def _export_meta(self):
