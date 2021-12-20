@@ -65,11 +65,12 @@ class MQ(object):
 
 
 class _TopicPair(object):
-    def __init__(self, tenant, namespace, send, receive):
+    def __init__(self, tenant, namespace, send, receive, replication_clusters):
         self.tenant = tenant
         self.namespace = namespace
         self.send = send
         self.receive = receive
+        self.replication_clusters = replication_clusters
 
 
 class Federation(FederationABC):
@@ -409,12 +410,13 @@ class Federation(FederationABC):
                 receive_topic_name = f"{party.role}-{party.party_id}-{self._party.role}-{self._party.party_id}-{queue_suffix}"
 
                 # topic_pair is a pair of topic for sending and receiving message respectively
+                # todo: fix replication_clusters
                 topic_pair = _TopicPair(
                     tenant=self._tenant,
                     namespace=self._session_id,
                     send=send_topic_name,
                     receive=receive_topic_name,
-                    replication_clusters=[party.party_id]
+                    replication_clusters=[(party.party_id, f"{self._tenant}/{self._session_id}")]
                 )
 
                 if party.party_id == self._party.party_id:
