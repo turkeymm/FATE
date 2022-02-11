@@ -96,6 +96,10 @@ def get_federated_proxy_address(src_party_id, dest_party_id):
             proxy_address = get_base_config("fate_on_spark", {}).get(proxy_config)
             protocol = CoordinationCommunicationProtocol.HTTP if protocol_config == "default" else protocol_config
             return proxy_address["host"], proxy_address[f"{protocol}_port"], protocol
+        elif proxy_config== CoordinationProxyService.FIREWORK:
+            proxy_address = get_base_config("fate_on_spark", {}).get(proxy_config)
+            return proxy_address["host"], proxy_address.get("grpc_port", proxy_address[
+                "port"]), CoordinationCommunicationProtocol.GRPC
         else:
             raise RuntimeError(f"can not support coordinate proxy {proxy_config}")
     elif isinstance(proxy_config, dict):

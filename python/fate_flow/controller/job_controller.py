@@ -110,6 +110,8 @@ class JobController(object):
     @classmethod
     def backend_compatibility(cls, job_parameters: RunParameters):
         # compatible with previous 1.5 versions
+
+
         if job_parameters.computing_engine is None or job_parameters.federation_engine is None:
             if job_parameters.work_mode is None or job_parameters.backend is None:
                 raise RuntimeError("unable to find compatible backend engines")
@@ -127,6 +129,10 @@ class JobController(object):
             elif backend == Backend.SPARK_PULSAR:
                 job_parameters.computing_engine = ComputingEngine.SPARK
                 job_parameters.federation_engine = FederationEngine.PULSAR
+                job_parameters.storage_engine = StorageEngine.HDFS
+            elif backend == Backend.SPARK_FIREWORK:
+                job_parameters.computing_engine = ComputingEngine.SPARK
+                job_parameters.federation_engine = FederationEngine.FIREWORK
                 job_parameters.storage_engine = StorageEngine.HDFS
             elif backend == Backend.SPARK_RABBITMQ:
                 job_parameters.computing_engine = ComputingEngine.SPARK
@@ -169,6 +175,7 @@ class JobController(object):
 
     @classmethod
     def get_job_engines_address(cls, job_parameters: RunParameters):
+        schedule_logger('kaideng').info(f"kaideng============get_job_engines_address {job_parameters.to_dict()}")
         engines_info = {}
         engine_list = [
             (EngineType.COMPUTING, job_parameters.computing_engine),

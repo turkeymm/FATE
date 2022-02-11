@@ -78,7 +78,7 @@ SUPPORT_BACKENDS_ENTRANCE = {
         EngineType.COMPUTING: [(ComputingEngine.SPARK, "spark"), (ComputingEngine.LINKIS_SPARK, "linkis_spark")],
         EngineType.STORAGE: [(StorageEngine.HDFS, "hdfs"), (StorageEngine.LINKIS_HIVE, "linkis_hive"), (StorageEngine.HIVE, "hive")],
         EngineType.FEDERATION: [
-            (FederationEngine.RABBITMQ, "rabbitmq"), (FederationEngine.PULSAR, "pulsar")]
+            (FederationEngine.RABBITMQ, "rabbitmq"), (FederationEngine.PULSAR, "pulsar"),(FederationEngine.FIREWORK, "firework")]
     }
 }
 

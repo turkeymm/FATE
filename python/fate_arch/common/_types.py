@@ -18,6 +18,7 @@ class Backend(IntEnum):
     SPARK_PULSAR = 2
     LINKIS_SPARK_RABBITMQ = 3
     STANDALONE = 1
+    SPARK_FIREWORK = 4
 
     def is_spark_rabbitmq(self):
         return self.value == self.SPARK_RABBITMQ
@@ -31,6 +32,9 @@ class Backend(IntEnum):
     def is_eggroll(self):
         return self.value == self.EGGROLL
 
+    def is_spark_firework(self):
+        return self.value == self.SPARK_FIREWORK
+
 
 class EngineType(object):
     COMPUTING = "computing"
@@ -42,6 +46,7 @@ class CoordinationProxyService(object):
     ROLLSITE = "rollsite"
     NGINX = "nginx"
     FATEFLOW = "fateflow"
+    FIREWORK = "firework"
 
 
 class CoordinationCommunicationProtocol(object):

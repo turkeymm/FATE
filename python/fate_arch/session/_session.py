@@ -1,19 +1,21 @@
 import threading
 import typing
 import uuid
-
+from fate_arch.common.log import getLogger
 from fate_arch.abc import CSessionABC, FederationABC, CTableABC
 from fate_arch.common import Backend, WorkMode
 from fate_arch.computing import ComputingEngine
 from fate_arch.federation import FederationEngine
 from fate_arch.session._parties import PartiesInfo
 
+LOGGER = getLogger()
 
 class Session(object):
 
     @staticmethod
     def create(backend: typing.Union[Backend, int] = Backend.EGGROLL,
                work_mode: typing.Union[WorkMode, int] = WorkMode.CLUSTER):
+        LOGGER.info(f"kaideng ====session create backend {backend}")
         if isinstance(work_mode, int):
             work_mode = WorkMode(work_mode)
         if isinstance(backend, int):
@@ -33,6 +35,9 @@ class Session(object):
 
         if backend == Backend.SPARK_PULSAR:
             return Session(ComputingEngine.SPARK, FederationEngine.PULSAR)
+
+        if backend == Backend.SPARK_FIREWORK:
+            return Session(ComputingEngine.SPARK, FederationEngine.FIREWORK)
 
     def __init__(self, computing_type: ComputingEngine,
                  federation_type: FederationEngine):
@@ -109,7 +114,7 @@ class Session(object):
                         runtime_conf: typing.Optional[dict] = None,
                         parties_info: typing.Optional[PartiesInfo] = None,
                         service_conf: typing.Optional[dict] = None):
-
+        LOGGER.info(f"kaideng============init_federation{self._federation_type}")
         if parties_info is None:
             if runtime_conf is None:
                 raise RuntimeError(
@@ -161,6 +166,19 @@ class Session(object):
                                                             party=parties_info.local_party,
                                                             runtime_conf=runtime_conf,
                                                             pulsar_config=service_conf)
+            return self
+        if self._federation_type == FederationEngine.FIREWORK:
+            from fate_arch.computing.spark import CSession
+            from fate_arch.federation.firework import Federation
+
+            if not self.is_computing_valid or not isinstance(self._computing_session, CSession):
+                raise RuntimeError(
+                    f"require computing with type {ComputingEngine.SPARK} valid")
+
+            self._federation_session = Federation.from_conf(federation_session_id=federation_session_id,
+                                                            party=parties_info.local_party,
+                                                            runtime_conf=runtime_conf,
+                                                            firework_config=service_conf)
             return self
 
         if self._federation_type == FederationEngine.STANDALONE:

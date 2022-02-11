@@ -330,6 +330,8 @@ class ResourceManager(object):
     @classmethod
     @DB.connection_context()
     def get_engine_registration_info(cls, engine_type, engine_name) -> EngineRegistry:
+        schedule_logger('kaideng').info(f"kaideng============get_engine_registration_info {engine_type} {engine_name}")
+
         engines = EngineRegistry.select().where(EngineRegistry.f_engine_type == engine_type,
                                                 EngineRegistry.f_engine_name == engine_name)
         if engines:
