@@ -1,0 +1,101 @@
+/*
+ * Copyright 2019 The Eggroll Authors. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+syntax = "proto3";
+
+package com.firework.cluster.rpc;
+
+
+message Message{
+     string msgId = 1;
+     bytes body = 2;
+     bytes head = 3;
+}
+
+message RouteInfo{
+    string srcPartyId =1;
+    string srcRole = 2;
+    string desPartyId = 3;
+    string desRole = 4;
+}
+
+
+message ProduceRequest {
+    string  transferId = 1;
+    string  sessionId = 2;
+    RouteInfo routeInfo = 3;
+    Message  message = 4;
+    bool    isOver = 5;
+}
+message ProduceResponse {
+    string  transferId = 1;
+    string  sessionId = 2;
+    int32  code = 3;
+    string  msg = 4;
+}
+
+message ConsumeRequest {
+  string transferId = 1;
+  string sessionId = 2;
+  int64  startOffset =3;
+
+}
+
+message  ConsumeResponse {
+    int64 startOffset = 1;
+    int64 nextOffset = 2;
+    Message  message = 3;
+    int32 code = 4;
+    string msg = 5;
+}
+
+message QueryTransferQueueInfoRequest{
+    string transferId = 1;
+    string sessionId = 2;
+}
+
+message QueryTransferQueueInfoResponse{
+    int32 code = 1;
+    string msg = 2;
+    repeated TransferQueueInfo transferQueueInfo = 3;
+
+}
+message  TransferQueueInfo{
+    string transferId = 1;
+    string ip = 2;
+    int32  port = 3;
+    int64 createTimestamp = 4;
+    int32  status = 5;
+}
+
+
+message CancelTransferRequest{
+   string  transferId = 1;
+   string  sessionId = 2;
+}
+message CancelTransferResponse{
+   int32  code = 1;
+   string  msg = 2;
+}
+// data transfer service
+service FireworkQueueService {
+    rpc produce (stream ProduceRequest) returns (stream ProduceResponse);
+    rpc produceUnary( ProduceRequest)  returns  (ProduceResponse);
+    rpc consume (ConsumeRequest) returns (stream ConsumeResponse);
+    rpc consumeUnary (ConsumeRequest) returns (ConsumeResponse);
+    rpc queryTransferQueueInfo(QueryTransferQueueInfoRequest) returns (QueryTransferQueueInfoResponse);
+    rpc cancelTransfer(CancelTransferRequest) returns (CancelTransferResponse);
+}

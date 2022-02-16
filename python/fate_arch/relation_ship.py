@@ -51,7 +51,7 @@ class Relationship(object):
             },
             EngineType.FEDERATION: {
                 "default": FederationEngine.RABBITMQ,
-                "support": [FederationEngine.PULSAR, FederationEngine.RABBITMQ]
+                "support": [FederationEngine.PULSAR, FederationEngine.RABBITMQ, FederationEngine.FIREWORK]
             },
         },
         ComputingEngine.LINKIS_SPARK: {
@@ -92,6 +92,6 @@ class Relationship(object):
             EngineType.COMPUTING: [(ComputingEngine.SPARK, "spark"), (ComputingEngine.LINKIS_SPARK, "linkis_spark")],
             EngineType.STORAGE: [(StorageEngine.HDFS, "hdfs"), (StorageEngine.HIVE, "hive"),
                                  (StorageEngine.LINKIS_HIVE, "linkis_hive"),(StorageEngine.LOCALFS, "localfs")],
-            EngineType.FEDERATION: [(FederationEngine.RABBITMQ, "rabbitmq"), (FederationEngine.PULSAR, "pulsar")]
+            EngineType.FEDERATION: [(FederationEngine.RABBITMQ, "rabbitmq"), (FederationEngine.PULSAR, "pulsar"), (FederationEngine.FIREWORK, "firework")]
         },
     }

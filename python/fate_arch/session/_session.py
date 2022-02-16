@@ -226,6 +226,24 @@ class Session(object):
             )
             return self
 
+        if self._federation_type == FederationEngine.FIREWORK:
+            from fate_arch.computing.spark import CSession
+            from fate_arch.federation.firework import Federation
+
+            if not self.is_computing_valid or not isinstance(
+                    self._computing_session, CSession
+            ):
+                raise RuntimeError(
+                    f"require computing with type {ComputingEngine.SPARK} valid"
+                )
+
+            self._federation_session = Federation.from_conf(federation_session_id=federation_session_id,
+                                                            party=parties_info.local_party,
+                                                            runtime_conf=runtime_conf,
+                                                            firework_config=service_conf)
+            return self
+
+
         raise RuntimeError(f"{self._federation_type} not supported")
 
     def _get_or_create_storage(self,
