@@ -265,7 +265,7 @@ class Federation(FederationABC):
         # the return is formed like this: [[(topic_key1, topic_info1), (topic_key2, topic_info2)...],[(topic_key1, topic_info1), (topic_key2, topic_info2]...]
         return topic_infos
 
-    def _get_or_create_topic(self, party: Party, name=None, partitions=None, dtype=None, client_type=None) -> typing.Tuple:
+    def _get_or_create_topic(self, party: Party, name=None, partitions=None, dtype=None, client_type=None) -> typing.List:
         topic_key_list = []
         topic_infos = []
 
@@ -291,7 +291,6 @@ class Federation(FederationABC):
                 LOGGER.debug(
                     f"[firework.get_or_create_topic]topic: {topic_key} for party:{party} not found, start to create")
                 # gen names
-
                 topic_key_splits = topic_key.split(_SPLIT_)
                 queue_suffix = "-".join(topic_key_splits[2:])
                 send_topic_name = f"{self._session_id}-{self._party.role}-{self._party.party_id}-{party.role}-{party.party_id}-{queue_suffix}"
@@ -301,13 +300,9 @@ class Federation(FederationABC):
                 topic_pair = _TopicPair(
                     namespace=self._session_id, send=send_topic_name, receive=receive_topic_name)
                 self._topic_map[topic_key] = topic_pair
-                # TODO: check federated queue status
-                LOGGER.debug(
-                    f"[firework.get_or_create_topic]topic for topic_key: {topic_key}, party:{party} created")
-
+                LOGGER.debug(f"[firework.get_or_create_topic]topic for topic_key: {topic_key}, party:{party} created")
             topic_pair = self._topic_map[topic_key]
             topic_infos.append((topic_key, topic_pair))
-
         return topic_infos
 
     def _get_channel(self, topic_pair, party_id, role, conf: dict):
@@ -470,12 +465,10 @@ class Federation(FederationABC):
         for k, v in kvs:
             count += 1
             el = {'k': p_dumps(k).hex(), 'v': p_dumps(v).hex()}
-            # roughly caculate the size of package to avoid serialization ;)
             if datastream.get_size() + sys.getsizeof(el['k']) + sys.getsizeof(el['v']) >= maximun_message_size:
                 print(f'[firework._partition_send]The size of message is: {datastream.get_size()}')
                 message_key_idx += 1
-                message_key = _SPLIT_.join([
-                    base_message_key, str(message_key_idx)])
+                message_key = _SPLIT_.join([base_message_key, str(message_key_idx)])
                 self._send_kv(name=name, tag=tag, data=datastream.get_data().encode(), channel_infos=channel_infos,
                               partition_size=-1, partitions=partitions, message_key=message_key, session_id=session_id)
                 datastream.clear()
@@ -499,9 +492,8 @@ class Federation(FederationABC):
     def _query_topic_info(self, channel_info, receive_topic, session_id):
         needRetry = True
         retryCount = 0
-        while needRetry & retryCount < 30:
+        while needRetry and retryCount < 30:
             retryCount = retryCount + 1
-
             response = channel_info.query(receive_topic, session_id)
 
             if response.code == 0:
