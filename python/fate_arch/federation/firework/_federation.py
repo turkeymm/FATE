@@ -15,13 +15,13 @@ from pyspark import SparkContext, RDD
 from fate_arch.abc import FederationABC, GarbageCollectionABC
 from fate_arch.common import Party
 from fate_arch.common.log import getLogger
-from fate_arch.computing.spark import get_storage_level, Table
+from fate_arch.computing.spark import Table
 from fate_arch.computing.spark._materialize import materialize
 from fate_arch.protobuf.python import firework_transfer_pb2
-from fate_arch.protobuf.python.firework_transfer_pb2_grpc import  FireworkQueueServiceStub
+from fate_arch.protobuf.python.firework_transfer_pb2_grpc import FireworkQueueServiceStub
+
 LOGGER = getLogger()
-# default message max size in bytes = 1MB
-DEFAULT_MESSAGE_MAX_SIZE = 104857
+
 NAME_DTYPE_TAG = '<dtype>'
 _SPLIT_ = '^'
 
@@ -34,7 +34,6 @@ class FederationDataType(object):
 maximun_message_size = 66535
 
 
-
 class _TopicPair(object):
     def __init__(self, namespace, send, receive):
         self.namespace = namespace
@@ -43,7 +42,8 @@ class _TopicPair(object):
 
 
 class FireworkChannel(object):
-    def __init__(self,host,port,party_id,role,send_topic,receive_topic,send_stub,query_stub:FireworkQueueServiceStub,consume_stub:FireworkQueueServiceStub=None):
+    def __init__(self, host, port, party_id, role, send_topic, receive_topic, send_stub,
+                 query_stub: FireworkQueueServiceStub, consume_stub: FireworkQueueServiceStub = None):
         self._host = host
         self._port = port
         self._send_topic = send_topic
@@ -55,29 +55,28 @@ class FireworkChannel(object):
         self._query_stub = query_stub
 
     def consume_unary(self, transferId, startOffset, session_id):
-        response = self._consume_stub.consumeUnary(firework_transfer_pb2.ConsumeRequest(transferId=transferId, startOffset=startOffset, sessionId= session_id))
+        response = self._consume_stub.consumeUnary(
+            firework_transfer_pb2.ConsumeRequest(transferId=transferId, startOffset=startOffset, sessionId=session_id))
         return response
-    def consume(self,transferId):
+
+    def consume(self, transferId):
         response = self._consume_stub.consume(firework_transfer_pb2.ConsumeRequest(transferId=transferId))
         return response
-    def cancel(self,transferId,session_id):
-        response = self._consume_stub.cancelTransfer(firework_transfer_pb2.CancelTransferRequest(transferId=transferId,sessionId=session_id))
+
+    def cancel(self, transferId, session_id):
+        response = self._consume_stub.cancelTransfer(
+            firework_transfer_pb2.CancelTransferRequest(transferId=transferId, sessionId=session_id))
         return response
 
     def query(self, transfer_id, session_id):
         LOGGER.debug(f"try to query {transfer_id} session {session_id}")
-        response = self._query_stub.queryTransferQueueInfo(firework_transfer_pb2.QueryTransferQueueInfoRequest(transferId=transfer_id, sessionId=session_id))
+        response = self._query_stub.queryTransferQueueInfo(
+            firework_transfer_pb2.QueryTransferQueueInfoRequest(transferId=transfer_id, sessionId=session_id))
         return response
-    def produce(self,produceRequest:firework_transfer_pb2.ProduceRequest):
+
+    def produce(self, produceRequest: firework_transfer_pb2.ProduceRequest):
         result = self._send_stub.produceUnary(produceRequest)
-        return  result
-
-    # def gen(self, packages):
-    #     for packet in packages:
-    #         yield packet
-
-
-
+        return result
 
 class Datastream(object):
     def __init__(self):
@@ -112,7 +111,7 @@ class Federation(FederationABC):
         LOGGER.debug(f"firework_config: {firework_config}")
         return Federation(federation_session_id, party, firework_config)
 
-    def __init__(self, session_id, party: Party,firework_config:dict):
+    def __init__(self, session_id, party: Party, firework_config: dict):
         self._session_id = session_id
         self._party = party
         self._firework_config = firework_config
@@ -192,8 +191,6 @@ class Federation(FederationABC):
         LOGGER.debug(f"[{log_str}]finish to get")
         return rtn
 
-
-
     def remote(self, v, name: str, tag: str, parties: typing.List[Party],
                gc: GarbageCollectionABC) -> typing.NoReturn:
         log_str = f"[firework.remote](name={name}, tag={tag}, parties={parties})"
@@ -209,8 +206,7 @@ class Federation(FederationABC):
             channel_infos = self._get_channels(
                 party_topic_infos=party_topic_infos)
             if isinstance(v, Table):
-                body = {"dtype": FederationDataType.TABLE,
-                        "partitions": v.partitions}
+                body = {"dtype": FederationDataType.TABLE, "partitions": v.partitions}
             else:
                 body = {"dtype": FederationDataType.OBJECT}
 
@@ -241,31 +237,25 @@ class Federation(FederationABC):
         else:
             LOGGER.debug(f"[{log_str}]start to remote obj")
             party_topic_infos = self._get_party_topic_infos(parties, name)
-            channel_infos = self._get_channels(
-                party_topic_infos=party_topic_infos)
-            self._send_obj(name=name, tag=tag, data=p_dumps(v),
-                           channel_infos=channel_infos, session_id=self._session_id, is_over=True)
-
+            channel_infos = self._get_channels(party_topic_infos=party_topic_infos)
+            self._send_obj(name=name, tag=tag, data=p_dumps(v), channel_infos=channel_infos,
+                           session_id=self._session_id, is_over=True)
         LOGGER.debug(f"[{log_str}]finish to remote")
 
     def cleanup(self, parties):
         LOGGER.debug("[firework.cleanup]start to cleanup...")
 
-
     def _get_vhost(self, party):
-        low, high = (self._party, party) if self._party < party else (
-            party, self._party)
+        low, high = (self._party, party) if self._party < party else (party, self._party)
         vhost = f"{self._session_id}-{low.role}-{low.party_id}-{high.role}-{high.party_id}"
         return vhost
 
-    def _get_party_topic_infos(self, parties: typing.List[Party], name=None, partitions=None, dtype=None) -> typing.List:
-        topic_infos = [self._get_or_create_topic(
-            party, name, partitions, dtype) for party in parties]
-
-        # the return is formed like this: [[(topic_key1, topic_info1), (topic_key2, topic_info2)...],[(topic_key1, topic_info1), (topic_key2, topic_info2]...]
+    def _get_party_topic_infos(self, parties: typing.List[Party], name=None, partitions=None,
+                               dtype=None) -> typing.List:
+        topic_infos = [self._get_or_create_topic(party, name, partitions, dtype) for party in parties]
         return topic_infos
 
-    def _get_or_create_topic(self, party: Party, name=None, partitions=None, dtype=None, client_type=None) -> typing.List:
+    def _get_or_create_topic(self, party: Party, name=None, partitions=None, dtype=None) -> typing.List:
         topic_key_list = []
         topic_infos = []
 
@@ -298,7 +288,8 @@ class Federation(FederationABC):
 
                 # topic_pair is a pair of topic for sending and receiving message respectively
                 topic_pair = _TopicPair(
-                    namespace=self._session_id, send=send_topic_name, receive=receive_topic_name)
+                    namespace=self._session_id, send=send_topic_name, receive=receive_topic_name
+                )
                 self._topic_map[topic_key] = topic_pair
                 LOGGER.debug(f"[firework.get_or_create_topic]topic for topic_key: {topic_key}, party:{party} created")
             topic_pair = self._topic_map[topic_key]
@@ -311,11 +302,8 @@ class Federation(FederationABC):
         print(f"get_channel {host}:{port}")
         channel = grpc.insecure_channel('{}:{}'.format(host, port))
         send_stub = FireworkQueueServiceStub(channel)
-        query_stub=FireworkQueueServiceStub(channel)
-
-        return FireworkChannel(host,port,party_id,role,topic_pair.send,topic_pair.receive,send_stub,query_stub)
-
-
+        query_stub = FireworkQueueServiceStub(channel)
+        return FireworkChannel(host, port, party_id, role, topic_pair.send, topic_pair.receive, send_stub, query_stub)
 
     def _get_channels(self, party_topic_infos):
         channel_infos = []
@@ -326,14 +314,10 @@ class Federation(FederationABC):
                 party_id = topic_key_splits[1]
                 info = self._channels_map.get(topic_key)
                 if info is None:
-                    info = self._get_channel( topic_pair, party_id=party_id, role=role,
-                                             conf=self._firework_config)
+                    info = self._get_channel(topic_pair, party_id=party_id, role=role, conf=self._firework_config)
                     self._channels_map[topic_key] = info
                 channel_infos.append(info)
         return channel_infos
-
-
-
 
     def _send_obj(self, name, tag, data, channel_infos, session_id, is_over=False):
         for info in channel_infos:
@@ -344,21 +328,25 @@ class Federation(FederationABC):
                 'message_id': name,
                 'correlation_id': tag,
             }
-
-            package = self._encode_packet(info._send_topic, info._party_id, info._role, data, properties, session_id, is_over)
+            LOGGER.info(f"send topic: {info._send_topic}")
+            package = self._encode_packet(info._send_topic, info._party_id, info._role, data, properties, session_id,
+                                          is_over)
             response = info.produce(package)
             if response.code != 0:
                 raise ValueError(f"firework response code {response.code}")
 
-
-    def _encode_packet(self,topic ,party_id,role, data, properties,session_id, is_over=False):
-
-        return firework_transfer_pb2.ProduceRequest(transferId=topic, sessionId=session_id, routeInfo=firework_transfer_pb2.RouteInfo( srcPartyId="9999", srcRole="test",
-                                                 desPartyId=party_id, desRole="ccc"),
-                                             message=firework_transfer_pb2.Message(
-                                                 head=bytes(json.dumps(properties), encoding="utf-8"),
-                                                 body=data), isOver=is_over)
-
+    def _encode_packet(self, topic, party_id, role, data, properties, session_id, is_over=False):
+        return firework_transfer_pb2.ProduceRequest(transferId=topic, sessionId=session_id,
+                                                    routeInfo=firework_transfer_pb2.RouteInfo(
+                                                        srcPartyId=self._party.party_id,
+                                                        srcRole=self._party.role,
+                                                        desPartyId=party_id,
+                                                        desRole="ccc"
+                                                    ),
+                                                    message=firework_transfer_pb2.Message(
+                                                        head=bytes(json.dumps(properties), encoding="utf-8"),
+                                                        body=data), isOver=is_over
+                                                    )
 
     def _get_message_cache_key(self, name, tag, party_id, role):
         cache_key = _SPLIT_.join([name, tag, str(party_id), role])
@@ -369,15 +357,18 @@ class Federation(FederationABC):
         role = channel_info._role
         LOGGER.info(f"channel info {channel_info._receive_topic}")
         wish_cache_key = self._get_message_cache_key(name, tag, party_id, role)
+        LOGGER.info(f"message cache len: {len(self._message_cache.keys())}, values:{self._message_cache}")
         if wish_cache_key in self._message_cache:
+            LOGGER.info(f"get wish_cache_key from _message_cache")
             return self._message_cache[wish_cache_key]
         self._query_topic_info(channel_info, channel_info._receive_topic, self._session_id)
 
         try_count = 0
         while True:
-            try_count = try_count +1
+            try_count = try_count + 1
             # return None indicates the client is closed
             response = channel_info.consume_unary(channel_info._receive_topic, -1, self._session_id)
+            LOGGER.info(f"response code {response.code}")
             if response.code == 0:
                 message = response.message
                 head_str = str(message.head, encoding="utf-8")
@@ -399,25 +390,23 @@ class Federation(FederationABC):
                     self._message_cache[cache_key] = p_loads(body)
                     # channel_info.basic_ack(message)
                     if cache_key == wish_cache_key:
-                        channel_info.cancel(channel_info._receive_topic,self._session_id)
+                        channel_info.cancel(channel_info._receive_topic, self._session_id)
                         LOGGER.debug(
                             f"[firework._receive_obj] cache_key: {cache_key}, obj: {self._message_cache[cache_key]}")
                         return self._message_cache[cache_key]
                 else:
                     raise ValueError(
-                        f"[firework._receive_obj] properties.content_type is {properties.content_type}, but must be text/plain")
+                        f"[firework._receive_obj] properties.content_type is {properties.content_type},"
+                        f" but must be text/plain")
             else:
-
+                LOGGER.info(f"try count: {try_count}")
                 time.sleep(5)
                 if try_count > 30:
-                    raise ValueError(
-                        f"{channel_info._receive_topic} try over time")
+                    raise ValueError(f"{channel_info._receive_topic} try over time")
 
-
-    def _send_kv(self, name, tag, data, channel_infos, partition_size, partitions, message_key, session_id, is_over=False):
-        headers = json.dumps({"partition_size": partition_size,
-                              "partitions": partitions, "message_key": message_key})
-
+    def _send_kv(self, name, tag, data, channel_infos, partition_size, partitions, message_key, session_id,
+                 is_over=False):
+        headers = json.dumps({"partition_size": partition_size, "partitions": partitions, "message_key": message_key})
         for info in channel_infos:
             properties = {
                 'content_type': 'application/json',
@@ -428,16 +417,15 @@ class Federation(FederationABC):
             }
             print(
                 f"[firework._send_kv]info: {info}, properties: {properties}.")
-            package = self._encode_packet(info._send_topic,info._party_id, info._role, data, properties, session_id, is_over)
+            package = self._encode_packet(info._send_topic, info._party_id, info._role, data, properties, session_id,
+                                          is_over)
             response = info.produce(package)
             if response.code != 0:
                 raise ValueError(f"firework response code {response.code}")
 
-
-    def _get_partition_send_func(self, name, tag, partitions, party_topic_infos,  conf: dict, session_id):
+    def _get_partition_send_func(self, name, tag, partitions, party_topic_infos, conf: dict, session_id):
         def _fn(index, kvs):
             return self._partition_send(index, kvs, name, tag, partitions, party_topic_infos, conf, session_id)
-
         return _fn
 
     def _get_channels_index(self, index, party_topic_infos, conf: dict):
@@ -449,7 +437,7 @@ class Federation(FederationABC):
             role = topic_key_splits[0]
             party_id = topic_key_splits[1]
             info = self._get_channel(
-                 topic_pair, party_id=party_id, role=role, conf=conf)
+                topic_pair, party_id=party_id, role=role, conf=conf)
             channel_infos.append(info)
         return channel_infos
 
@@ -478,16 +466,15 @@ class Federation(FederationABC):
         message_key = _SPLIT_.join([base_message_key, str(message_key_idx)])
 
         self._send_kv(name=name, tag=tag, data=datastream.get_data().encode(), channel_infos=channel_infos,
-                      partition_size=count, partitions=partitions, message_key=message_key,  session_id=session_id, is_over=True)
+                      partition_size=count, partitions=partitions, message_key=message_key, session_id=session_id,
+                      is_over=True)
 
         return [1]
 
-    def _get_partition_receive_func(self, name, tag, party_id, role, topic_infos, session_id,conf: dict):
+    def _get_partition_receive_func(self, name, tag, party_id, role, topic_infos, session_id, conf: dict):
         def _fn(index, kvs):
             return self._partition_receive(index, kvs, name, tag, party_id, role, topic_infos, session_id, conf)
-
         return _fn
-
 
     def _query_topic_info(self, channel_info, receive_topic, session_id):
         needRetry = True
@@ -497,10 +484,9 @@ class Federation(FederationABC):
             response = channel_info.query(receive_topic, session_id)
 
             if response.code == 0:
-                needRetry = False
                 host = response.transferQueueInfo[0].ip
                 port = response.transferQueueInfo[0].port
-                LOGGER.info(f"query {receive_topic} result {host} {port}");
+                LOGGER.info(f"query {receive_topic} result {host} {port}")
                 channel = grpc.insecure_channel('{}:{}'.format(host, port))
                 channel_info._consume_stub = FireworkQueueServiceStub(channel)
                 break
@@ -508,16 +494,16 @@ class Federation(FederationABC):
                 if response.code == 138:
                     time.sleep(5)
                 else:
-                    raise  ValueError(f"query topic info {receive_topic} error code {response.code}")
+                    raise ValueError(f"query topic info {receive_topic} error code {response.code}")
 
     def _handle(i):
         LOGGER.info(f"receive {i}")
 
-    def _partition_receive(self, index, kvs, name, tag, party_id, role, topic_infos, session_id,conf: dict):
+    def _partition_receive(self, index, kvs, name, tag, party_id, role, topic_infos, session_id, conf: dict):
         LOGGER.info(f"partition receive {index} {kvs} {name} {tag} {party_id} {role} {topic_infos} {conf}")
         topic_pair = topic_infos[index][1]
         channel_info = self._get_channel(
-             topic_pair, party_id, role, conf)
+            topic_pair, party_id, role, conf)
         message_key_cache = set()
         all_data = []
         count = 0
@@ -528,9 +514,8 @@ class Federation(FederationABC):
         try_count = 0
         partition_size = -1
 
-
         while True:
-            try_count = try_count+1
+            try_count = try_count + 1
             response = channel_info.consume_unary(topic_pair.receive, -1, session_id)
             if response.code == 0:
                 message = response.message
@@ -577,5 +562,4 @@ class Federation(FederationABC):
                 LOGGER.error(f"firework response {response} try count {try_count}")
                 time.sleep(1)
                 if try_count > 20:
-                    raise ValueError(
-                        f"firework can not get message")
+                    raise ValueError(f"firework can not get message")
