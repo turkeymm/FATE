@@ -43,6 +43,7 @@ class TaskExecutor(object):
         task_info = {}
         try:
             job_id, component_name, task_id, task_version, role, party_id, run_ip, config, job_server = cls.get_run_task_args(kwargs)
+            RuntimeConfig.init_env()
             if job_server:
                 RuntimeConfig.init_config(JOB_SERVER_HOST=job_server.split(':')[0],
                                           HTTP_PORT=job_server.split(':')[1])
