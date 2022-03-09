@@ -2,7 +2,7 @@
   "engine": "MYSQL",
   "address": {
     "user": "fate",
-    "passwd": "fate",
+    "passwd": "PWD_YOU_SHOULD_CHANGE",
     "host": "127.0.0.1",
     "port": 3306,
     "db": "experiment",
