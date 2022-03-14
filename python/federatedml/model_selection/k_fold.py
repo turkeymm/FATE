@@ -20,6 +20,8 @@ import functools
 import numpy as np
 from sklearn.model_selection import KFold as sk_KFold
 
+from fate_arch.federation import Tag, get, remote
+from fate_arch.session import PartiesInfo as Parties
 from fate_arch.session import computing_session as session
 from federatedml.evaluation.evaluation import Evaluation
 from federatedml.model_selection.cross_validate import BaseCrossValidator
@@ -231,6 +233,7 @@ class KFold(BaseCrossValidator):
             model.set_flowid(this_flowid)
             model.predict(None)
 
+    @Tag("CrossValidation")
     def _align_data_index(self, data_instance, flowid, data_application=None):
         schema = data_instance.schema
 
@@ -239,26 +242,27 @@ class KFold(BaseCrossValidator):
             # return
             raise ValueError("In _align_data_index, data_application should be provided.")
 
-        transfer_variable = CrossValidationTransferVariable()
-        if data_application == consts.TRAIN_DATA:
-            transfer_id = transfer_variable.train_sid
-        elif data_application == consts.TEST_DATA:
-            transfer_id = transfer_variable.test_sid
-        else:
-            raise ValueError("In _align_data_index, data_application should be provided.")
+        # transfer_variable = CrossValidationTransferVariable()
+        # if data_application == consts.TRAIN_DATA:
+        #     transfer_id = transfer_variable.train_sid
+        # elif data_application == consts.TEST_DATA:
+        #     transfer_id = transfer_variable.test_sid
+        # else:
+        #     raise ValueError("In _align_data_index, data_application should be provided.")
 
         if self.role == consts.GUEST:
             data_sid = data_instance.mapValues(lambda v: 1)
-            transfer_id.remote(data_sid,
-                               role=consts.HOST,
-                               idx=-1,
-                               suffix=(flowid,))
+            # transfer_id.remote(data_sid,
+            #                    role=consts.HOST,
+            #                    idx=-1,
+            #                    suffix=(flowid,))
+            remote(parties=Parties.Host[:], name="data_sid." + str(data_application), v=data_sid)
             LOGGER.info("remote {} to host".format(data_application))
             return data_instance
         elif self.role == consts.HOST:
-            data_sid = transfer_id.get(idx=0,
-                                       suffix=(flowid,))
-
+            # data_sid = transfer_id.get(idx=0,
+            #                            suffix=(flowid,))
+            data_sid = get(parties=Parties.Guest[0], name="data_sid." + str(data_application))
             LOGGER.info("get {} from guest".format(data_application))
             join_data_insts = data_sid.join(data_instance, lambda s, d: d)
             join_data_insts.schema = schema

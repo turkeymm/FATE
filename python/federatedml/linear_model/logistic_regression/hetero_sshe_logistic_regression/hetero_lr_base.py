@@ -21,6 +21,8 @@ from abc import ABC
 
 import numpy as np
 
+from fate_arch.federation import Tag, get, remote
+from fate_arch.session import PartiesInfo as Parties
 from fate_arch.session import get_parties
 from federatedml.framework.hetero.procedure import batch_generator
 from federatedml.linear_model.linear_model_base import BaseLinearModel
@@ -37,8 +39,8 @@ from federatedml.secureprotol.spdz.secure_matrix.secure_matrix import SecureMatr
 from federatedml.secureprotol.spdz.tensor import fixedpoint_numpy, fixedpoint_table
 from federatedml.transfer_variable.transfer_class.batch_generator_transfer_variable import \
     BatchGeneratorTransferVariable
-from federatedml.transfer_variable.transfer_class.converge_checker_transfer_variable import \
-    ConvergeCheckerTransferVariable
+# from federatedml.transfer_variable.transfer_class.converge_checker_transfer_variable import \
+#     ConvergeCheckerTransferVariable
 from federatedml.transfer_variable.transfer_class.sshe_model_transfer_variable import SSHEModelTransferVariable
 from federatedml.util import LOGGER
 from federatedml.util import consts
@@ -64,11 +66,15 @@ class HeteroLRBase(BaseLinearModel, ABC):
     def _transfer_q_field(self):
         if self.role == consts.GUEST:
             q_field = self.cipher.public_key.n
-            self.transfer_variable.q_field.remote(q_field, role=consts.HOST, suffix=("q_field",))
+            # self.transfer_variable.q_field.remote(q_field, role=consts.HOST, suffix=("q_field",))
+
+            remote(parties=Parties.Host[0], name="q_field", v=q_field)
 
         else:
-            q_field = self.transfer_variable.q_field.get(role=consts.GUEST, idx=0,
-                                                          suffix=("q_field",))
+            # q_field = self.transfer_variable.q_field.get(role=consts.GUEST, idx=0,
+            #                                               suffix=("q_field",))
+
+            q_field = get(parties=Parties.Guest[0], name="q_field")
 
         return q_field
 
@@ -79,7 +85,7 @@ class HeteroLRBase(BaseLinearModel, ABC):
             self.init_param_obj.fit_intercept = False
         self.cipher = PaillierEncrypt()
         self.cipher.generate_key(self.model_param.encrypt_param.key_length)
-        self.transfer_variable = SSHEModelTransferVariable()
+        # self.transfer_variable = SSHEModelTransferVariable()
         self.one_vs_rest_obj = one_vs_rest_factory(self, role=self.role, mode=self.mode, has_arbiter=False)
 
         self.converge_func_name = params.early_stop
@@ -94,9 +100,8 @@ class HeteroLRBase(BaseLinearModel, ABC):
             self.remote_optimizer = copy.deepcopy(self.optimizer)
 
         self.batch_generator = batch_generator.Guest() if self.role == consts.GUEST else batch_generator.Host()
-        self.batch_generator.register_batch_generator(BatchGeneratorTransferVariable(), has_arbiter=False)
+        self.batch_generator.register_batch_generator(has_arbiter=False)
         self.fixedpoint_encoder = FixedPointEndec(n=self.q_field)
-        self.converge_transfer_variable = ConvergeCheckerTransferVariable()
         self.secure_matrix_obj = SecureMatrix(party=self.local_party,
                                               q_field=self.q_field,
                                               other_party=self.other_party)
@@ -122,24 +127,24 @@ class HeteroLRBase(BaseLinearModel, ABC):
     def is_respectively_reveal(self):
         return self.model_param.reveal_strategy == "respectively"
 
-    def share_model(self, w, suffix):
+    def share_model(self, w):
         source = [w, self.other_party]
         if self.local_party.role == consts.GUEST:
             wb, wa = (
-                fixedpoint_numpy.FixedPointTensor.from_source(f"wb_{suffix}", source[0],
+                fixedpoint_numpy.FixedPointTensor.from_source(f"wb", source[0],
                                                               encoder=self.fixedpoint_encoder,
                                                               q_field=self.q_field),
-                fixedpoint_numpy.FixedPointTensor.from_source(f"wa_{suffix}", source[1],
+                fixedpoint_numpy.FixedPointTensor.from_source(f"wa", source[1],
                                                               encoder=self.fixedpoint_encoder,
                                                               q_field=self.q_field),
             )
             return wb, wa
         else:
             wa, wb = (
-                fixedpoint_numpy.FixedPointTensor.from_source(f"wa_{suffix}", source[0],
+                fixedpoint_numpy.FixedPointTensor.from_source(f"wa", source[0],
                                                               encoder=self.fixedpoint_encoder,
                                                               q_field=self.q_field),
-                fixedpoint_numpy.FixedPointTensor.from_source(f"wb_{suffix}", source[1],
+                fixedpoint_numpy.FixedPointTensor.from_source(f"wb", source[1],
                                                               encoder=self.fixedpoint_encoder,
                                                               q_field=self.q_field),
             )
@@ -154,6 +159,7 @@ class HeteroLRBase(BaseLinearModel, ABC):
     def compute_loss(self, weights, labels, suffix, cipher):
         raise NotImplementedError("Should not call here")
 
+    @Tag("sshe_lr-fit")
     def fit(self, data_instances, validate_data=None):
         self.header = data_instances.schema.get("header", [])
         self._abnormal_detection(data_instances)
@@ -199,9 +205,7 @@ class HeteroLRBase(BaseLinearModel, ABC):
                 q_field=self.q_field,
                 use_mix_rand=self.model_param.use_mix_rand,
         ) as spdz:
-            spdz.set_flowid(self.flowid)
-            self.secure_matrix_obj.set_flowid(self.flowid)
-            w_self, w_remote = self.share_model(w, suffix="init")
+            w_self, w_remote = self.share_model(w)
             last_w_self, last_w_remote = w_self, w_remote
             LOGGER.debug(f"first_w_self shape: {w_self.shape}, w_remote_shape: {w_remote.shape}")
 
@@ -374,38 +378,41 @@ class HeteroLRBase(BaseLinearModel, ABC):
         if self.model_param.reveal_strategy == "respectively":
 
             if self.role == consts.GUEST:
-                new_w = w_self.get(tensor_name=f"wb_{suffix}",
+                new_w = w_self.get(tensor_name=f"wb",
                                    broadcast=False)
-                w_remote.broadcast_reconstruct_share(tensor_name=f"wa_{suffix}")
+                w_remote.broadcast_reconstruct_share(tensor_name=f"wa")
 
             else:
-                w_remote.broadcast_reconstruct_share(tensor_name=f"wb_{suffix}")
-                new_w = w_self.get(tensor_name=f"wa_{suffix}",
+                w_remote.broadcast_reconstruct_share(tensor_name=f"wb")
+                new_w = w_self.get(tensor_name=f"wa",
                                    broadcast=False)
 
         elif self.model_param.reveal_strategy == "encrypted_reveal_in_host":
 
             if self.role == consts.GUEST:
-                new_w = w_self.get(tensor_name=f"wb_{suffix}",
+                new_w = w_self.get(tensor_name=f"wb",
                                    broadcast=False)
                 encrypted_w_remote = self.cipher.recursive_encrypt(self.fixedpoint_encoder.decode(w_remote.value))
                 encrypted_w_remote_tensor = fixedpoint_numpy.PaillierFixedPointTensor(value=encrypted_w_remote)
-                encrypted_w_remote_tensor.broadcast_reconstruct_share(tensor_name=f"wa_{suffix}")
+                encrypted_w_remote_tensor.broadcast_reconstruct_share(tensor_name=f"wa")
             else:
-                w_remote.broadcast_reconstruct_share(tensor_name=f"wb_{suffix}")
+                w_remote.broadcast_reconstruct_share(tensor_name=f"wb")
 
-                new_w = w_self.reconstruct(tensor_name=f"wa_{suffix}", broadcast=False)
+                new_w = w_self.reconstruct(tensor_name=f"wa", broadcast=False)
 
         else:
             raise NotImplementedError(f"reveal strategy: {self.model_param.reveal_strategy} has not been implemented.")
         return new_w
 
+    @Tag("check_converge_by_loss")
     def check_converge_by_loss(self, loss, suffix):
         if self.role == consts.GUEST:
             self.is_converged = self.converge_func.is_converge(loss)
-            self.transfer_variable.is_converged.remote(self.is_converged, suffix=suffix)
+            # self.transfer_variable.is_converged.remote(self.is_converged, suffix=suffix)
+            remote(parties=Parties.Host[0], name="is_converged", v=self.is_converged)
         else:
-            self.is_converged = self.transfer_variable.is_converged.get(idx=0, suffix=suffix)
+            # self.is_converged = self.transfer_variable.is_converged.get(idx=0, suffix=suffix)
+            self.is_converged = get(parties=Parties.Guest[0], name="is_converged")
         return self.is_converged
 
     def check_converge_by_weights(self, last_w, new_w, suffix):
@@ -430,19 +437,19 @@ class HeteroLRBase(BaseLinearModel, ABC):
 
         grad_encode = np.array([grad_encode])
 
-        grad_tensor_name = ".".join(("check_converge_grad",) + suffix)
+        grad_tensor_name = "check_converge_grad"
         grad_tensor = fixedpoint_numpy.FixedPointTensor(value=grad_encode,
                                                         q_field=self.fixedpoint_encoder.n,
                                                         endec=self.fixedpoint_encoder,
                                                         tensor_name=grad_tensor_name)
 
-        grad_tensor_transpose_name = ".".join(("check_converge_grad_transpose",) + suffix)
+        grad_tensor_transpose_name = "check_converge_grad_transpose"
         grad_tensor_transpose = fixedpoint_numpy.FixedPointTensor(value=grad_encode.T,
                                                                   q_field=self.fixedpoint_encoder.n,
                                                                   endec=self.fixedpoint_encoder,
                                                                   tensor_name=grad_tensor_transpose_name)
 
-        grad_norm_tensor_name = ".".join(("check_converge_grad_norm",) + suffix)
+        grad_norm_tensor_name = "check_converge_grad_norm"
 
         grad_norm = grad_tensor.dot(grad_tensor_transpose, target_name=grad_norm_tensor_name).get()
 

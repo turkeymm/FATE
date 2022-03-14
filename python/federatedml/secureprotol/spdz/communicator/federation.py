@@ -13,20 +13,15 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-from federatedml.transfer_variable.transfer_class.secret_share_transfer_variable import SecretShareTransferVariable
+
+from fate_arch.federation import Tag, get, remote
 
 
 class Communicator(object):
 
     def __init__(self, local_party=None, all_parties=None):
-        self._transfer_variable = SecretShareTransferVariable()
-        self._share_variable = self._transfer_variable.share.disable_auto_clean()
-        self._rescontruct_variable = self._transfer_variable.rescontruct.set_preserve_num(3)
-        self._mul_triplets_encrypted_variable = self._transfer_variable.multiply_triplets_encrypted.set_preserve_num(3)
-        self._mul_triplets_cross_variable = self._transfer_variable.multiply_triplets_cross.set_preserve_num(3)
-
-        self._local_party = self._transfer_variable.local_party() if local_party is None else local_party
-        self._all_parties = self._transfer_variable.all_parties() if all_parties is None else all_parties
+        self._local_party = local_party
+        self._all_parties = all_parties
         self._party_idx = self._all_parties.index(self._local_party)
         self._other_parties = self._all_parties[:self._party_idx] + self._all_parties[(self._party_idx + 1):]
 
@@ -46,37 +41,57 @@ class Communicator(object):
     def party_idx(self):
         return self._party_idx
 
+    @Tag("rescontruct")
     def get_rescontruct_shares(self, tensor_name):
-        return self._rescontruct_variable.get_parties(self._other_parties, suffix=(tensor_name,))
+        return get(parties=self._other_parties, name=tensor_name)
+        # return self._rescontruct_variable.get_parties(self._other_parties, suffix=(tensor_name,))
 
+    @Tag("rescontruct")
     def broadcast_rescontruct_share(self, share, tensor_name):
-        return self._rescontruct_variable.remote_parties(share, self._other_parties, suffix=(tensor_name,))
+        return remote(parties=self._other_parties, name=tensor_name, v=share)
+        # return self._rescontruct_variable.remote_parties(share, self._other_parties, suffix=(tensor_name,))
 
+    @Tag("share")
     def remote_share(self, share, tensor_name, party):
-        return self._share_variable.remote_parties(share, party, suffix=(tensor_name,))
+        return remote(parties=party, name=tensor_name, v=share)
+        # return self._share_variable.remote_parties(share, party, suffix=(tensor_name,))
 
+    @Tag("share")
     def get_share(self, tensor_name, party):
-        return self._share_variable.get_parties(party, suffix=(tensor_name,))
+        if not isinstance(party, list):
+            party = [party]
+        return get(parties=party, name=tensor_name)
+        # return self._share_variable.get_parties(party, suffix=(tensor_name,))
 
+    @Tag("multiply_triplets_encrypted")
     def remote_encrypted_tensor(self, encrypted, tag):
-        return self._mul_triplets_encrypted_variable.remote_parties(encrypted, parties=self._other_parties, suffix=tag)
+        return remote(parties=self._other_parties, name=tag, v=encrypted)
+        # return self._mul_triplets_encrypted_variable.remote_parties(encrypted, parties=self._other_parties, suffix=tag)
 
+    @Tag("multiply_triplets_cross")
     def remote_encrypted_cross_tensor(self, encrypted, parties, tag):
-        return self._mul_triplets_cross_variable.remote_parties(encrypted, parties=parties, suffix=tag)
+        return remote(parties=parties, name=tag, v=encrypted)
+        # return self._mul_triplets_cross_variable.remote_parties(encrypted, parties=parties, suffix=tag)
 
+    @Tag("multiply_triplets_encrypted")
     def get_encrypted_tensors(self, tag):
-        return (self._other_parties,
-                self._mul_triplets_encrypted_variable.get_parties(parties=self._other_parties, suffix=tag))
+        return(
+            self._other_parties,
+            get(parties=self._other_parties, name=tag)
+        )
 
+        # return (self._other_parties,
+        #         self._mul_triplets_encrypted_variable.get_parties(parties=self._other_parties, suffix=tag))
+
+    @Tag("multiply_triplets_cross")
     def get_encrypted_cross_tensors(self, tag):
-        return self._mul_triplets_cross_variable.get_parties(parties=self._other_parties, suffix=tag)
+        return get(parties=self._other_parties, name=tag)
+        # return self._mul_triplets_cross_variable.get_parties(parties=self._other_parties, suffix=tag)
 
-    def clean(self):
-        self._rescontruct_variable.clean()
-        self._share_variable.clean()
-        self._rescontruct_variable.clean()
-        self._mul_triplets_encrypted_variable.clean()
-        self._mul_triplets_cross_variable.clean()
+    # def clean(self):
+    #     self._rescontruct_variable.clean()
+    #     self._share_variable.clean()
+    #     self._rescontruct_variable.clean()
+    #     self._mul_triplets_encrypted_variable.clean()
+    #     self._mul_triplets_cross_variable.clean()
 
-    def set_flowid(self, flowid):
-        self._transfer_variable.set_flowid(flowid)

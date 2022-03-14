@@ -18,6 +18,8 @@ import operator
 
 import numpy as np
 
+from fate_arch.federation import Tag, get, remote
+from fate_arch.session import PartiesInfo as Parties
 from federatedml.linear_model.linear_model_weight import LinearModelWeights
 from federatedml.linear_model.logistic_regression.hetero_sshe_logistic_regression.hetero_lr_base import HeteroLRBase
 from federatedml.protobuf.generated import lr_model_param_pb2
@@ -39,15 +41,15 @@ class HeteroLRHost(HeteroLRBase):
 
         za_suffix = ("za",) + suffix
         za_share = self.secure_matrix_obj.secure_matrix_mul(features,
-                                                            tensor_name=".".join(za_suffix),
-                                                            cipher=None,
-                                                            suffix=za_suffix)
+                                                            tensor_name="za",
+                                                            cipher=None
+                                                            )
 
         zb_suffix = ("zb",) + suffix
         zb_share = self.secure_matrix_obj.secure_matrix_mul(w_remote,
-                                                            tensor_name=".".join(zb_suffix),
-                                                            cipher=self.cipher,
-                                                            suffix=zb_suffix)
+                                                            tensor_name="zb",
+                                                            cipher=self.cipher
+                                                            )
 
         z = z1 + za_share + zb_share
         return z
@@ -64,12 +66,11 @@ class HeteroLRHost(HeteroLRBase):
 
         self.wx_self = z
 
-        self.secure_matrix_obj.share_encrypted_matrix(suffix=suffix,
-                                                      is_remote=True,
+        self.secure_matrix_obj.share_encrypted_matrix(is_remote=True,
                                                       cipher=cipher,
                                                       z=z)
 
-        tensor_name = ".".join(("sigmoid_z",) + suffix)
+        tensor_name = "sigmoid_z"
         shared_sigmoid_z = SecureMatrix.from_source(tensor_name,
                                                     self.other_party,
                                                     cipher,
@@ -88,15 +89,15 @@ class HeteroLRHost(HeteroLRBase):
 
         zb_suffix = ("ga2",) + suffix
         ga2_1 = self.secure_matrix_obj.secure_matrix_mul(features,
-                                                         tensor_name=".".join(zb_suffix),
-                                                         cipher=None,
-                                                         suffix=zb_suffix)
+                                                         tensor_name="ga2",
+                                                         cipher=None
+                                                         )
 
         # LOGGER.debug(f"ga2_1: {ga2_1}")
 
         ga_new = ga + ga2_1
 
-        tensor_name = ".".join(("encrypt_g",) + suffix)
+        tensor_name = "encrypt_g"
         gb1 = SecureMatrix.from_source(tensor_name,
                                        self.other_party,
                                        cipher,
@@ -117,12 +118,11 @@ class HeteroLRHost(HeteroLRBase):
         LOGGER.info(f"[compute_loss]: Calculate loss ...")
         wx_self_square = (self.wx_self * self.wx_self).reduce(operator.add)
 
-        self.secure_matrix_obj.share_encrypted_matrix(suffix=suffix,
-                                                      is_remote=True,
+        self.secure_matrix_obj.share_encrypted_matrix(is_remote=True,
                                                       cipher=cipher,
                                                       wx_self_square=wx_self_square)
 
-        tensor_name = ".".join(("shared_loss",) + suffix)
+        tensor_name = "shared_loss"
         share_loss = SecureMatrix.from_source(tensor_name=tensor_name,
                                               source=self.other_party,
                                               cipher=cipher,
@@ -135,10 +135,10 @@ class HeteroLRHost(HeteroLRBase):
             if loss_norm:
                 share_loss += loss_norm
             LOGGER.debug(f"share_loss+loss_norm: {share_loss}")
-            tensor_name = ".".join(("loss",) + suffix)
+            tensor_name = "loss"
             share_loss.broadcast_reconstruct_share(tensor_name=tensor_name)
         else:
-            tensor_name = ".".join(("loss",) + suffix)
+            tensor_name = "loss"
             share_loss.broadcast_reconstruct_share(tensor_name=tensor_name)
             if self.optimizer.penalty == consts.L2_PENALTY:
                 w_self, w_remote = weights
@@ -147,28 +147,32 @@ class HeteroLRHost(HeteroLRBase):
 
                 w_encode = np.array([w_encode])
 
-                w_tensor_name = ".".join(("loss_norm_w",) + suffix)
+                w_tensor_name = "loss_norm_w"
                 w_tensor = fixedpoint_numpy.FixedPointTensor(value=w_encode,
                                                              q_field=self.fixedpoint_encoder.n,
                                                              endec=self.fixedpoint_encoder,
                                                              tensor_name=w_tensor_name)
 
-                w_tensor_transpose_name = ".".join(("loss_norm_w_transpose",) + suffix)
+                w_tensor_transpose_name = "loss_norm_w_transpose"
                 w_tensor_transpose = fixedpoint_numpy.FixedPointTensor(value=w_encode.T,
                                                                        q_field=self.fixedpoint_encoder.n,
                                                                        endec=self.fixedpoint_encoder,
                                                                        tensor_name=w_tensor_transpose_name)
 
-                loss_norm_tensor_name = ".".join(("loss_norm",) + suffix)
+                loss_norm_tensor_name = "loss_norm"
 
                 loss_norm = w_tensor.dot(w_tensor_transpose, target_name=loss_norm_tensor_name)
                 loss_norm.broadcast_reconstruct_share()
 
+    @Tag("reveal_every_iter_weights_check")
     def _reveal_every_iter_weights_check(self, last_w, new_w, suffix):
         square_sum = np.sum((last_w - new_w) ** 2)
-        self.converge_transfer_variable.square_sum.remote(square_sum, role=consts.GUEST, idx=0, suffix=suffix)
-        return self.converge_transfer_variable.converge_info.get(idx=0, suffix=suffix)
+        # self.converge_transfer_variable.square_sum.remote(square_sum, role=consts.GUEST, idx=0, suffix=suffix)
+        remote(parties=Parties.Guest[0], name="square_sum", v=square_sum)
+        is_converge = get(parties=Parties.Guest[0], name="is_converge")
+        return is_converge
 
+    @Tag("sshe-lr-predict")
     def predict(self, data_instances):
         LOGGER.info("Start predict ...")
         self._abnormal_detection(data_instances)
@@ -186,8 +190,11 @@ class HeteroLRHost(HeteroLRBase):
         f = functools.partial(_vec_dot,
                               coef=self.model_weights.coef_,
                               intercept=self.model_weights.intercept_)
-        prob_host = data_instances.mapValues(f)
-        self.transfer_variable.host_prob.remote(prob_host, role=consts.GUEST, idx=0)
+
+        probs = data_instances.mapValues(f)
+        # self.transfer_variable.host_prob.remote(probs, role=consts.GUEST, idx=0)
+        remote(parties=Parties.Guest[0], name="host_probs", v=probs)
+
         LOGGER.info("Remote probability to Guest")
 
     def get_single_model_param(self, model_weights=None, header=None):

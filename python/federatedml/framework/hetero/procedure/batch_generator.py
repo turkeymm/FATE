@@ -27,12 +27,11 @@ class Guest(batch_info_sync.Guest):
         self.finish_sycn = False
         self.batch_nums = None
         self.batch_masked = False
+        self.has_arbiter = False
+        super(Guest, self).__init__(has_arbiter=self.has_arbiter)
 
-    def register_batch_generator(self, transfer_variables, has_arbiter=True):
-        self._register_batch_data_index_transfer(transfer_variables.batch_info,
-                                                 transfer_variables.batch_data_index,
-                                                 getattr(transfer_variables, "batch_validate_info", None),
-                                                 has_arbiter)
+    def register_batch_generator(self, transfer_variables=None, has_arbiter=False):
+        self.has_arbiter = has_arbiter
 
     def initialize_batch_generator(self, data_instances, batch_size, suffix=tuple(),
                                    shuffle=False, batch_strategy="full", masked_rate=0):
@@ -43,23 +42,22 @@ class Guest(batch_info_sync.Guest):
         batch_info = {"batch_size": self.mini_batch_obj.batch_size, "batch_num": self.batch_nums,
                       "batch_mutable": self.mini_batch_obj.batch_mutable,
                       "masked_batch_size": self.mini_batch_obj.masked_batch_size}
-        self.sync_batch_info(batch_info, suffix)
+        self.sync_batch_info(batch_info)
 
         if not self.mini_batch_obj.batch_mutable:
-            self.prepare_batch_data(suffix)
+            self.prepare_batch_data()
 
-    def prepare_batch_data(self, suffix=tuple()):
+    def prepare_batch_data(self):
         self.mini_batch_obj.generate_batch_data()
         index_generator = self.mini_batch_obj.mini_batch_data_generator(result='index')
         batch_index = 0
         for batch_data_index in index_generator:
-            batch_suffix = suffix + (batch_index,)
-            self.sync_batch_index(batch_data_index, batch_suffix)
+            self.sync_batch_index(batch_data_index, batch_index)
             batch_index += 1
 
     def generate_batch_data(self, with_index=False, suffix=tuple()):
         if self.mini_batch_obj.batch_mutable:
-            self.prepare_batch_data(suffix)
+            self.prepare_batch_data()
 
         if with_index:
             data_generator = self.mini_batch_obj.mini_batch_data_generator(result='both')
@@ -71,7 +69,7 @@ class Guest(batch_info_sync.Guest):
                 yield batch_data
 
     def verify_batch_legality(self, suffix=tuple()):
-        validate_infos = self.sync_batch_validate_info(suffix)
+        validate_infos = self.sync_batch_validate_info()
         least_batch_size = 0
         is_legal = True
         for validate_info in validate_infos:
@@ -95,13 +93,11 @@ class Host(batch_info_sync.Host):
         self.batch_masked = False
         self.masked_batch_size = None
 
-    def register_batch_generator(self, transfer_variables, has_arbiter=None):
-        self._register_batch_data_index_transfer(transfer_variables.batch_info,
-                                                 transfer_variables.batch_data_index,
-                                                 getattr(transfer_variables, "batch_validate_info", None))
+    def register_batch_generator(self, transfer_variables=None, has_arbiter=None):
+        pass
 
     def initialize_batch_generator(self, data_instances, suffix=tuple(), **kwargs):
-        batch_info = self.sync_batch_info(suffix)
+        batch_info = self.sync_batch_info()
         batch_size = batch_info.get("batch_size")
         self.batch_nums = batch_info.get('batch_num')
         self.batch_mutable = batch_info.get("batch_mutable")
@@ -109,22 +105,21 @@ class Host(batch_info_sync.Host):
         self.batch_masked = self.masked_batch_size != batch_size
 
         if not self.batch_mutable:
-            self.prepare_batch_data(data_instances, suffix)
+            self.prepare_batch_data(data_instances)
         else:
             self.data_inst = data_instances
 
-    def prepare_batch_data(self, data_inst, suffix=tuple()):
+    def prepare_batch_data(self, data_inst):
         self.batch_data_insts = []
         for batch_index in range(self.batch_nums):
-            batch_suffix = suffix + (batch_index,)
-            batch_data_index = self.sync_batch_index(suffix=batch_suffix)
+            batch_data_index = self.sync_batch_index(batch_index)
             # batch_data_inst = batch_data_index.join(data_instances, lambda g, d: d)
             batch_data_inst = data_inst.join(batch_data_index, lambda d, g: d)
             self.batch_data_insts.append(batch_data_inst)
 
     def generate_batch_data(self, suffix=tuple()):
         if self.batch_mutable:
-            self.prepare_batch_data(data_inst=self.data_inst, suffix=suffix)
+            self.prepare_batch_data(data_inst=self.data_inst)
 
         batch_index = 0
         for batch_data_inst in self.batch_data_insts:
@@ -141,18 +136,18 @@ class Host(batch_info_sync.Host):
         else:
             batch_validate_info = {"legality": True}
 
-        self.sync_batch_validate_info(batch_validate_info, suffix)
+        self.sync_batch_validate_info(batch_validate_info)
 
 
 class Arbiter(batch_info_sync.Arbiter):
     def __init__(self):
         self.batch_num = None
 
-    def register_batch_generator(self, transfer_variables):
-        self._register_batch_data_index_transfer(transfer_variables.batch_info, transfer_variables.batch_data_index)
+    def register_batch_generator(self, transfer_variables=None):
+        pass
 
     def initialize_batch_generator(self, suffix=tuple()):
-        batch_info = self.sync_batch_info(suffix)
+        batch_info = self.sync_batch_info()
         self.batch_num = batch_info.get('batch_num')
 
     def generate_batch_data(self):

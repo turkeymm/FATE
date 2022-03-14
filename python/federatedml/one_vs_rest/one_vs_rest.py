@@ -17,6 +17,8 @@
 import copy
 import functools
 
+from fate_arch.federation import Tag, get, remote
+from fate_arch.session import PartiesInfo as Parties
 from federatedml.feature.instance import Instance
 from federatedml.transfer_variable.transfer_class.one_vs_rest_transfer_variable import OneVsRestTransferVariable
 from federatedml.util import LOGGER
@@ -28,7 +30,7 @@ from federatedml.util.io_check import assert_io_num_rows_equal
 class OneVsRest(object):
     def __init__(self, classifier, role, mode, has_arbiter):
         self.classifier = classifier
-        self.transfer_variable = OneVsRestTransferVariable()
+        # self.transfer_variable = OneVsRestTransferVariable()
 
         self.classes = None
         self.role = role
@@ -245,28 +247,45 @@ class HomoOneVsRest(OneVsRest):
             return False
         return True
 
+    @Tag("HomoOneVsRest")
     def _sync_class_guest(self, class_set):
-        host_classes_list = self.transfer_variable.host_classes.get(idx=-1)
+        # host_classes_list = self.transfer_variable.host_classes.get(idx=-1)
+
+        host_classes_list = get(parties=Parties.Host[:], name="host_classes")
+
         for host_class in host_classes_list:
             class_set = class_set | host_class
         self.classes = list(class_set)
-        self.transfer_variable.aggregate_classes.remote(self.classes,
-                                                        role=consts.HOST,
-                                                        idx=-1)
+
+        # self.transfer_variable.aggregate_classes.remote(self.classes,
+        #                                                 role=consts.HOST,
+        #                                                 idx=-1)
+
+        remote(parties=Parties.Host[:], name="aggregate_classes", v=self.classes)
+
         if self.has_arbiter:
             class_num = len(self.classes)
-            self.transfer_variable.aggregate_classes.remote(class_num,
-                                                            role=consts.ARBITER,
-                                                            idx=0)
+            # self.transfer_variable.aggregate_classes.remote(class_num,
+            #                                                 role=consts.ARBITER,
+            #                                                 idx=0)
+            remote(parties=Parties.Arbiter[0], name="class_num", v=class_num)
 
+    @Tag("HomoOneVsRest")
     def _sync_class_host(self, class_set):
-        self.transfer_variable.host_classes.remote(class_set,
-                                                   role=consts.GUEST,
-                                                   idx=0)
-        self.classes = self.transfer_variable.aggregate_classes.get(idx=0)
+        # self.transfer_variable.host_classes.remote(class_set,
+        #                                            role=consts.GUEST,
+        #                                            idx=0)
+        # self.classes = self.transfer_variable.aggregate_classes.get(idx=0)
 
+        remote(parties=Parties.Guest[0], name="host_classes", v=class_set)
+        self.classes = get(parties=Parties.Guest[0], name="aggregate_classes")
+
+
+    @Tag("HomoOneVsRest")
     def _sync_class_arbiter(self):
-        class_nums = self.transfer_variable.aggregate_classes.get(idx=0)
+        # class_nums = self.transfer_variable.aggregate_classes.get(idx=0)
+        class_nums = get(parties=Parties.Guest[0], name="class_num")
+
         self.classes = [x for x in range(class_nums)]
 
 
@@ -277,24 +296,38 @@ class HeteroOneVsRest(OneVsRest):
             return True
         return False
 
+    @Tag("HeteroOneVsRest")
     def _sync_class_guest(self, class_set):
         self.classes = list(class_set)
         class_num = len(self.classes)
-        self.transfer_variable.aggregate_classes.remote(class_num,
-                                                        role=consts.HOST,
-                                                        idx=-1)
-        if self.has_arbiter:
-            self.transfer_variable.aggregate_classes.remote(class_num,
-                                                            role=consts.ARBITER,
-                                                            idx=0)
+        # self.transfer_variable.aggregate_classes.remote(class_num,
+        #                                                 role=consts.HOST,
+        #                                                 idx=-1)
 
+        remote(parties=Parties.Host[:], name="class_num", v=class_num)
+
+        if self.has_arbiter:
+            # self.transfer_variable.aggregate_classes.remote(class_num,
+            #                                                 role=consts.ARBITER,
+            #                                                 idx=0)
+
+            remote(parties=Parties.Arbiter[0], name="class_num", v=class_num)
+
+    @Tag("HeteroOneVsRest")
     def _sync_class_host(self, class_set):
         LOGGER.debug("Start to get aggregate classes")
-        class_nums = self.transfer_variable.aggregate_classes.get(idx=0)
+        # class_nums = self.transfer_variable.aggregate_classes.get(idx=0)
+
+        class_nums = get(parties=Parties.Guest[0], name="class_num")
+
         self.classes = [x for x in range(class_nums)]
 
+    @Tag("HeteroOneVsRest")
     def _sync_class_arbiter(self):
-        class_nums = self.transfer_variable.aggregate_classes.get(idx=0)
+        # class_nums = self.transfer_variable.aggregate_classes.get(idx=0)
+
+        class_nums = get(parties=Parties.Guest[0], name="class_num")
+
         self.classes = [x for x in range(class_nums)]
 
 
