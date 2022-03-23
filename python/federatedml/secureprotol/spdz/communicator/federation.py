@@ -41,6 +41,18 @@ class Communicator(object):
     def party_idx(self):
         return self._party_idx
 
+    @Tag("q_field")
+    def remote_q_field(self, q_field,  party):
+        return remote(parties=party, name="q_field", v=q_field)
+        # return self._share_variable.remote_parties(share, party, suffix=(tensor_name,))
+
+    @Tag("q_field")
+    def get_q_field(self, party):
+        if not isinstance(party, list):
+            party = [party]
+        return get(parties=party, name="q_field")
+        # return self._share_variable.get_parties(party, suffix=(tensor_name,))
+
     @Tag("rescontruct")
     def get_rescontruct_shares(self, tensor_name):
         return get(parties=self._other_parties, name=tensor_name)

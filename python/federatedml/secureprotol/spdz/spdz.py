@@ -18,6 +18,7 @@ from federatedml.secureprotol.fate_paillier import PaillierKeypair
 from federatedml.secureprotol.spdz.communicator import Communicator
 from federatedml.secureprotol.spdz.utils import NamingService
 from federatedml.secureprotol.spdz.utils import naming
+from federatedml.util import LOGGER
 
 
 Q = 293973345475167247070445277780365744413 ** 2
@@ -40,7 +41,7 @@ class SPDZ(object):
     def has_instance(cls):
         return cls.__instance is not None
 
-    def __init__(self, name="ss", q_field=Q, local_party=None, all_parties=None, use_mix_rand=False, n_length=1024):
+    def __init__(self, name="ss", q_field=None, local_party=None, all_parties=None, use_mix_rand=False, n_length=1024):
         self.name_service = naming.NamingService(name)
         self._prev_name_service = None
         self._pre_instance = None
@@ -53,10 +54,12 @@ class SPDZ(object):
             raise EnvironmentError("support 2-party secret share only")
         self.public_key, self.private_key = PaillierKeypair.generate_keypair(n_length=n_length)
 
-        if q_field is None or q_field < self.public_key.n:
+        if q_field is None:
             self.q_field = self.public_key.n
         else:
             self.q_field = q_field
+
+        self.q_field = self._align_q_field(self.q_field)
 
         self.use_mix_rand = use_mix_rand
 
@@ -82,4 +85,15 @@ class SPDZ(object):
 
     def set_flowid(self, flowid):
         self.communicator.set_flowid(flowid)
+
+    def _align_q_field(self, q_field):
+        self.communicator.remote_q_field(q_field=q_field, party=self.other_parties)
+        other_q_field = self.communicator.get_q_field(party=self.other_parties)
+        other_q_field.append(q_field)
+        max_q_field = max(other_q_field)
+        return max_q_field
+
+
+
+
 
