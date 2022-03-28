@@ -150,6 +150,23 @@ class HomoNNClient(HomoNNBase):
             from federatedml.nn.homo_nn import _version_0
 
             _version_0.client_fit(self=self, data_inst=data)
+
+        elif self._api_version == 3:
+            from federatedml.nn.homo_nn.complex_model import build_trainer
+
+            if not self.component_properties.is_warm_start:
+                self._trainer = None
+            self._trainer, dataloader = build_trainer(
+                param=self.param,
+                data=data,
+                should_label_align=not self.component_properties.is_warm_start,
+                trainer=self._trainer,
+            )
+            self._trainer.fit(dataloader)
+            self.set_summary(self._trainer.summary())
+            # save model to local filesystem
+            self._trainer.save_checkpoint()
+
         else:
             from federatedml.nn.homo_nn._torch import build_trainer
 
@@ -220,6 +237,11 @@ class HomoNNClient(HomoNNBase):
                 meta_obj=meta_obj,
                 model_obj=model_obj,
                 is_warm_start_mode=self.component_properties.is_warm_start,
+            )
+        elif self._api_version == 3:
+            from federatedml.nn.homo_nn.complex_model import MyPyTorchFederatedTrainer
+            self._trainer = MyPyTorchFederatedTrainer.load_model(
+                model_obj=model_obj, meta_obj=meta_obj, param=self.param
             )
         else:
             from federatedml.nn.homo_nn._torch import PyTorchFederatedTrainer
