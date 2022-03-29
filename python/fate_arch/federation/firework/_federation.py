@@ -80,10 +80,6 @@ class FireworkChannel(object):
         result = self._send_stub.produceUnary(produceRequest)
         return result
 
-    # def gen(self, packages):
-    #     for packet in packages:
-    #         yield packet
-
 
 class Datastream(object):
     def __init__(self):
@@ -348,10 +344,10 @@ class Federation(FederationABC):
     def _encode_packet(self, topic, party_id, role, data, properties, session_id, is_over=False):
 
         return firework_transfer_pb2.ProduceRequest(transferId=topic, sessionId=session_id,
-                                                    routeInfo=firework_transfer_pb2.RouteInfo(srcPartyId="9999",
-                                                                                              srcRole="test",
+                                                    routeInfo=firework_transfer_pb2.RouteInfo(srcPartyId=self._party.party_id,
+                                                                                              srcRole=self._party.role,
                                                                                               desPartyId=party_id,
-                                                                                              desRole="ccc"),
+                                                                                              desRole=role),
                                                     message=firework_transfer_pb2.Message(
                                                         head=bytes(json.dumps(properties), encoding="utf-8"),
                                                         body=data), isOver=is_over)
@@ -382,14 +378,14 @@ class Federation(FederationABC):
                 head_str = str(message.head, encoding="utf-8")
                 LOGGER.debug(f"head str {head_str}")
                 properties = json.loads(head_str)
-                LOGGER.info(f"firework response propertiest {properties}")
+                LOGGER.info(f"firework response properties {properties}")
                 body = message.body
                 if properties['message_id'] != name or properties['correlation_id'] != tag:
                     LOGGER.warning(
                         f"[firework._receive_obj] require {name}.{tag}, got {properties['message_id']}.{properties['correlation_id']}")
                     # just ack and continue
                     # channel_info.basic_ack(message)
-                    continue
+                    # continue
 
                 cache_key = self._get_message_cache_key(
                     properties['message_id'], properties['correlation_id'], party_id, role)
@@ -503,7 +499,7 @@ class Federation(FederationABC):
                 needRetry = False
                 host = response.transferQueueInfo[0].ip
                 port = response.transferQueueInfo[0].port
-                LOGGER.info(f"query {receive_topic} result {host} {port}");
+                LOGGER.info(f"query {receive_topic} result {host} {port}")
                 channel = grpc.insecure_channel('{}:{}'.format(host, port))
                 channel_info._consume_stub = FireworkQueueServiceStub(channel)
                 break
@@ -512,9 +508,6 @@ class Federation(FederationABC):
                     time.sleep(5)
                 else:
                     raise ValueError(f"query topic info {receive_topic} error code {response.code}")
-
-    def _handle(i):
-        LOGGER.info(f"receive {i}")
 
     def _partition_receive(self, index, kvs, name, tag, party_id, role, topic_infos, session_id, conf: dict):
         LOGGER.info(f"partition receive {index} {kvs} {name} {tag} {party_id} {role} {topic_infos} {conf}")
