@@ -264,7 +264,7 @@ class PipeLine(object):
 
         if component is None:
             if self._stage != "predict":
-                raise ValueError(f"Component {component} does not exist")
+                raise ValueError(f"Component {name} does not exist")
             training_meta = self._predict_pipeline[0]["pipeline"].get_predict_meta()
 
             component = training_meta.get("components").get(name)
