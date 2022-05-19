@@ -49,7 +49,6 @@ class DenseFeatureTransformer(object):
     def __init__(self, data_transform_param):
         self.delimitor = data_transform_param.delimitor
         self.data_type = data_transform_param.data_type
-        self.exclusive_data_type = data_transform_param.exclusive_data_type
         self.missing_fill = data_transform_param.missing_fill
         self.default_value = data_transform_param.default_value
         self.missing_fill_method = data_transform_param.missing_fill_method
@@ -70,6 +69,11 @@ class DenseFeatureTransformer(object):
         self.exclusive_data_type_fid_map = {}
         self.match_id_name = None
         self.with_match_id = data_transform_param.with_match_id
+
+        if data_transform_param.exclusive_data_type:
+            self.exclusive_data_type = dict([(k.lower(), v) for k, v in data_transform_param.exclusive_data_type.items()])
+        else:
+            self.exclusive_data_type = None
 
     def generate_header(self, input_data, mode="fit"):
         header = input_data.schema["header"].lower()
@@ -446,7 +450,7 @@ class SparseFeatureTransformer(object):
         self.with_match_id = data_transform_param.with_match_id
         self.match_id_name = "match_id" if self.with_match_id else None
         self.with_label = data_transform_param.with_label
-        self.label_name = data_transform_param.label_name if self.with_label else None
+        self.label_name = data_transform_param.label_name.lower() if self.with_label else None
 
     def get_max_feature_index(self, line, delimitor=' '):
         if line.strip() == '':
@@ -625,7 +629,7 @@ class SparseTagTransformer(object):
         self.output_format = data_transform_param.output_format
         self.header = None
         self.sid_name = "sid"
-        self.label_name = self.label_name = data_transform_param.label_name
+        self.label_name = data_transform_param.label_name.lower() if data_transform_param.label_name else None
         self.missing_fill = data_transform_param.missing_fill
         self.missing_fill_method = data_transform_param.missing_fill_method
         self.default_value = data_transform_param.default_value
